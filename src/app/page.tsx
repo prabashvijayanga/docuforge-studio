@@ -61,7 +61,7 @@ export default function DocuForgeStudioPage() {
       try {
         const rendered = await renderPdfPagesToThumbnails(selected[0]);
         setPages(rendered);
-      } catch (err) {
+      } catch {
         alert("Failed to render PDF preview. Ensure the PDF is valid and not password-protected.");
       } finally {
         setLoadingThumbnails(false);
@@ -204,9 +204,10 @@ export default function DocuForgeStudioPage() {
       a.download = outputFilename;
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Export Error:", err);
-      alert(`Processing failed: ${err?.message || "Ensure FastAPI server is running on port 8000"}`);
+      const msg = err instanceof Error ? err.message : "Ensure FastAPI server is running";
+      alert(`Processing failed: ${msg}`);
     } finally {
       setIsProcessing(false);
     }
