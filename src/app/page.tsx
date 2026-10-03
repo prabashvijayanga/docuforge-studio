@@ -10,7 +10,6 @@ import { InspectorSidebar } from "@/components/layout/inspector-sidebar";
 import { formatBytes } from "@/lib/utils";
 import { FileText, Trash2, Scissors } from "lucide-react";
 
-// Localhost වලදී Next.js proxy size limit එක මඟහැර කෙලින්ම FastAPI port 8000 වෙත යැවීම
 const API_BASE =
   typeof window !== "undefined" &&
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
@@ -100,7 +99,6 @@ export default function DocuForgeStudioPage() {
     setDeletedHistory((prev) => prev.slice(0, -1));
   };
 
-  // පිටු 100+ PDF සඳහා පිටු පරාසයක් (උදා: "1-5, 10, 20-30") එකවර මැකීම හෝ ඉතිරි කරගැනීම
   const parsePageRange = (input: string, maxPages: number): Set<number> => {
     const result = new Set<number>();
     const parts = input.split(",");
@@ -225,43 +223,44 @@ export default function DocuForgeStudioPage() {
         onExport={handleExport}
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Responsive Workspace Container: Stacks vertically on mobile/tablet, side-by-side on lg+ */}
+      <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
         {files.length === 0 ? (
           <FileDropzone mode={activeTool} onFilesSelected={handleFilesSelected} />
         ) : activeTool === "organize" ? (
           loadingThumbnails ? (
-            <div className="flex-1 flex items-center justify-center font-mono text-xs text-zinc-500">
+            <div className="flex-1 py-20 flex items-center justify-center font-mono text-xs text-zinc-500">
               RENDERING PDF SHEETS IN MEMORY...
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Bulk Page Range Bar for Large Documents */}
-              <div className="bg-white border-b border-zinc-200 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
+              {/* Responsive Bulk Page Range Bar */}
+              <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2 text-xs text-zinc-600">
-                  <Scissors className="w-3.5 h-3.5 text-zinc-400" />
+                  <Scissors className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
                   <span className="font-medium text-zinc-800">Quick Range Selector:</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="text"
                     placeholder="e.g. 1-5, 12, 20-45"
                     value={rangeInput}
                     onChange={(e) => setRangeInput(e.target.value)}
-                    className="px-3 py-1 text-xs font-mono bg-zinc-50 border border-zinc-300 rounded-md w-48 focus:outline-none focus:border-zinc-900"
+                    className="px-3 py-1.5 sm:py-1 text-xs font-mono bg-zinc-50 border border-zinc-300 rounded-md flex-1 sm:w-44 focus:outline-none focus:border-zinc-900"
                   />
                   <button
                     type="button"
                     onClick={() => handleBulkRangeAction("remove")}
-                    className="px-2.5 py-1 text-xs font-medium bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700 rounded border border-zinc-200 transition-colors"
+                    className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700 rounded border border-zinc-200 transition-colors"
                   >
-                    Remove Range
+                    Remove
                   </button>
                   <button
                     type="button"
                     onClick={() => handleBulkRangeAction("keep")}
-                    className="px-2.5 py-1 text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white rounded transition-colors"
+                    className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white rounded transition-colors"
                   >
-                    Keep Only Range
+                    Keep Only
                   </button>
                 </div>
               </div>
@@ -278,18 +277,20 @@ export default function DocuForgeStudioPage() {
             </div>
           )
         ) : (
-          <div className="flex-1 p-8 overflow-y-auto">
-            <div className="max-w-2xl mx-auto bg-white border border-zinc-200 rounded-lg p-6">
+          <div className="flex-1 p-4 sm:p-8 overflow-y-auto">
+            <div className="max-w-2xl mx-auto bg-white border border-zinc-200 rounded-lg p-4 sm:p-6">
               <h3 className="text-sm font-semibold text-zinc-900 mb-4">
                 Queued Files ({files.length})
               </h3>
               <div className="divide-y divide-zinc-100">
                 {files.map((file, idx) => (
-                  <div key={idx} className="py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-zinc-400" />
-                      <div>
-                        <div className="text-xs font-medium text-zinc-800">{file.name}</div>
+                  <div key={idx} className="py-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-zinc-800 truncate">
+                          {file.name}
+                        </div>
                         <div className="font-mono text-[10px] text-zinc-400">
                           {formatBytes(file.size)}
                         </div>
@@ -298,7 +299,7 @@ export default function DocuForgeStudioPage() {
                     <button
                       type="button"
                       onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
-                      className="p-1.5 text-zinc-400 hover:text-red-600 rounded"
+                      className="p-1.5 text-zinc-400 hover:text-red-600 rounded shrink-0"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>

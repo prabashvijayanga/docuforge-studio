@@ -27,7 +27,7 @@ export function SortablePageCard({ page, index, onRotate, onDelete }: SortablePa
     <div
       ref={setNodeRef}
       style={style}
-      className={`group relative bg-white border rounded-lg p-2.5 flex flex-col transition-shadow ${
+      className={`group relative bg-white border rounded-lg p-2 sm:p-2.5 flex flex-col transition-shadow ${
         isDragging
           ? "border-zinc-900 shadow-lg opacity-90"
           : "border-zinc-200/90 shadow-xs hover:border-zinc-400"
@@ -38,7 +38,7 @@ export function SortablePageCard({ page, index, onRotate, onDelete }: SortablePa
         <div
           {...attributes}
           {...listeners}
-          className="flex items-center gap-1 cursor-grab active:cursor-grabbing text-zinc-400 hover:text-zinc-700"
+          className="flex items-center gap-1 cursor-grab active:cursor-grabbing text-zinc-400 hover:text-zinc-700 touch-none py-0.5"
           title="Drag to reorder"
         >
           <GripVertical className="w-3.5 h-3.5" />
@@ -47,11 +47,12 @@ export function SortablePageCard({ page, index, onRotate, onDelete }: SortablePa
           </span>
         </div>
 
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Always visible on mobile/tablet, hover-visible on desktop */}
+        <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
           <button
             type="button"
             onClick={() => onRotate(page.id)}
-            className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
+            className="p-1.5 sm:p-1 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
             title="Rotate 90°"
           >
             <RotateCw className="w-3.5 h-3.5" />
@@ -59,7 +60,7 @@ export function SortablePageCard({ page, index, onRotate, onDelete }: SortablePa
           <button
             type="button"
             onClick={() => onDelete(page.id)}
-            className="p-1 rounded bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700"
+            className="p-1.5 sm:p-1 rounded bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700"
             title="Remove page"
           >
             <Trash2 className="w-3.5 h-3.5" />
