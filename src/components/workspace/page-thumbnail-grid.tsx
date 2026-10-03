@@ -12,7 +12,7 @@ import {
 import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 import { PDFPageItem } from "@/types/document";
 import { SortablePageCard } from "./sortable-page-card";
-import { RotateCw, Undo2 } from "lucide-react";
+import { RotateCw, Undo2, FilePlus2 } from "lucide-react";
 
 interface PageThumbnailGridProps {
   pages: PDFPageItem[];
@@ -22,6 +22,8 @@ interface PageThumbnailGridProps {
   onRotateAll: () => void;
   onDeletePage: (id: string) => void;
   onUndoDelete: () => void;
+  onInsertNoteAfter: (index: number) => void;
+  onEditNote: (page: PDFPageItem) => void;
 }
 
 export function PageThumbnailGrid({
@@ -32,6 +34,8 @@ export function PageThumbnailGrid({
   onRotateAll,
   onDeletePage,
   onUndoDelete,
+  onInsertNoteAfter,
+  onEditNote,
 }: PageThumbnailGridProps) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -57,7 +61,16 @@ export function PageThumbnailGrid({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onInsertNoteAfter(pages.length - 1)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white"
+          >
+            <FilePlus2 className="w-3.5 h-3.5" />
+            <span>+ New Smart Typed Page</span>
+          </button>
+
           {canUndo && (
             <button
               type="button"
@@ -89,6 +102,8 @@ export function PageThumbnailGrid({
                 index={index}
                 onRotate={onRotatePage}
                 onDelete={onDeletePage}
+                onInsertNoteAfter={onInsertNoteAfter}
+                onEditNote={onEditNote}
               />
             ))}
           </div>

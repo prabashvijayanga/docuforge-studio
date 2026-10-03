@@ -1,12 +1,13 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
 import { InspectorSettings, PDFPageItem, ToolMode } from "@/types/document";
 import { renderPdfPagesToThumbnails } from "@/lib/pdf-client-renderer";
 import { StudioHeader } from "@/components/layout/studio-header";
 import { FileDropzone } from "@/components/workspace/file-dropzone";
 import { PageThumbnailGrid } from "@/components/workspace/page-thumbnail-grid";
+import { SmartNoteModal } from "@/components/workspace/smart-note-modal";
 import { InspectorSidebar } from "@/components/layout/inspector-sidebar";
 import { formatBytes } from "@/lib/utils";
 import { FileText, Trash2, Scissors } from "lucide-react";
@@ -17,7 +18,6 @@ const API_BASE =
     ? "http://127.0.0.1:8000"
     : "";
 
-// ලොකු පින්තූර (10MB - 50MB+) Browser එක ඇතුළෙම optimize කරලා JPEG bytes බවට හැරවීම
 async function imageFileToNormalizedJpegBytes(
   file: File,
   maxDimension = 2600,
@@ -46,7 +46,6 @@ async function imageFileToNormalizedJpegBytes(
         return;
       }
 
-      // PNG transparent background සුදු පාටින් පිරවීම
       ctx.fillStyle = "#FFFFFF";
       ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
@@ -74,6 +73,30 @@ async function imageFileToNormalizedJpegBytes(
   });
 }
 
+// Long paragraphs A4 
+function wrapTextLines(text: string, maxCharsPerLine = 78): string[] {
+  const result: string[] = [];
+  const paragraphs = text.split("\n");
+  for (const para of paragraphs) {
+    if (!para.trim()) {
+      result.push("");
+      continue;
+    }
+    const words = para.split(" ");
+    let currentLine = "";
+    for (const word of words) {
+      if ((currentLine + " " + word).trim().length <= maxCharsPerLine) {
+        currentLine = (currentLine + " " + word).trim();
+      } else {
+        if (currentLine) result.push(currentLine);
+        currentLine = word;
+      }
+    }
+    if (currentLine) result.push(currentLine);
+  }
+  return result;
+}
+
 export default function DocuForgeStudioPage() {
   const [activeTool, setActiveTool] = useState<ToolMode>("organize");
   const [engineOnline, setEngineOnline] = useState(false);
@@ -83,6 +106,11 @@ export default function DocuForgeStudioPage() {
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [rangeInput, setRangeInput] = useState("");
+
+  // Smart Note Modal State
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [insertAfterIdx, setInsertAfterIdx] = useState<number>(0);
+  const [editingNotePageId, setEditingNotePageId] = useState<string | null>(null);
 
   const [settings, setSettings] = useState<InspectorSettings>({
     watermarkText: "",
@@ -157,6 +185,53 @@ export default function DocuForgeStudioPage() {
     setDeletedHistory((prev) => prev.slice(0, -1));
   };
 
+  // Open Modal to insert a new Smart Typed Page after `index`
+  const handleOpenInsertNote = (index: number) => {
+    setEditingNotePageId(null);
+    setInsertAfterIdx(index);
+    setNoteModalOpen(true);
+  };
+
+  // Open Modal to edit an existing Smart Typed Page
+  const handleOpenEditNote = (page: PDFPageItem) => {
+    setEditingNotePageId(page.id);
+    setNoteModalOpen(true);
+  };
+
+  const handleSaveNotePage = (title: string, typedText: string, previewDataUrl: string) => {
+    if (editingNotePageId) {
+      setPages((prev) =>
+        prev.map((p) =>
+          p.id === editingNotePageId
+            ? { ...p, noteTitle: title, noteText: typedText, thumbnailDataUrl: previewDataUrl }
+            : p
+        )
+      );
+      setEditingNotePageId(null);
+      return;
+    }
+
+    const newPage: PDFPageItem = {
+      id: `custom-note-${Date.now()}`,
+      originalIndex: -1,
+      pageNumber: pages.length + 1,
+      rotation: 0,
+      thumbnailDataUrl: previewDataUrl,
+      width: 595,
+      height: 842,
+      isCustomNote: true,
+      noteTitle: title,
+      noteText: typedText,
+    };
+
+    setDeletedHistory((prev) => [...prev, pages]);
+    setPages((prev) => {
+      const copy = [...prev];
+      copy.splice(insertAfterIdx + 1, 0, newPage);
+      return copy;
+    });
+  };
+
   const parsePageRange = (input: string, maxPages: number): Set<number> => {
     const result = new Set<number>();
     const parts = input.split(",");
@@ -210,7 +285,93 @@ export default function DocuForgeStudioPage() {
     setIsProcessing(true);
 
     try {
-      // 1. IMAGES TO PDF — Direct Browser Engine (Vercel 4.5MB limit එක මඟහරියි, ඕනෑම ලොකු පින්තූරයක් තත්පරයෙන් PDF කරයි)
+      // 1. ORGANIZE & SMART TYPED NOTES — Direct Client-Side PDF-Lib Engine (Supports 100+ pages + Custom Typed Note Sheets!)
+      if (activeTool === "organize") {
+        const srcBytes = await files[0].arrayBuffer();
+        const srcDoc = await PDFDocument.load(srcBytes);
+        const outDoc = await PDFDocument.create();
+
+        const fontRegular = await outDoc.embedFont(StandardFonts.Helvetica);
+        const fontBold = await outDoc.embedFont(StandardFonts.HelveticaBold);
+
+        for (const p of pages) {
+          let targetPage;
+
+          if (p.isCustomNote) {
+            // Render Custom Smart Typed Note Page
+            targetPage = outDoc.addPage([595.28, 841.89]);
+            const { width, height } = targetPage.getSize();
+            let cursorY = height - 56;
+
+            if (p.noteTitle) {
+              targetPage.drawText(p.noteTitle, {
+                x: 48,
+                y: cursorY,
+                size: 16,
+                font: fontBold,
+                color: rgb(0.09, 0.09, 0.11),
+              });
+              cursorY -= 14;
+              targetPage.drawLine({
+                start: { x: 48, y: cursorY },
+                end: { x: width - 48, y: cursorY },
+                thickness: 0.75,
+                color: rgb(0.85, 0.85, 0.88),
+              });
+              cursorY -= 24;
+            }
+
+            const wrappedLines = wrapTextLines(p.noteText || "", 80);
+            for (const line of wrappedLines) {
+              if (cursorY < 56) {
+                targetPage = outDoc.addPage([595.28, 841.89]);
+                cursorY = height - 56;
+              }
+              targetPage.drawText(line, {
+                x: 48,
+                y: cursorY,
+                size: 11.5,
+                font: fontRegular,
+                color: rgb(0.18, 0.18, 0.21),
+              });
+              cursorY -= 18;
+            }
+
+            if (p.rotation !== 0) {
+              targetPage.setRotation(degrees(p.rotation));
+            }
+          } else {
+            // Copy original PDF page
+            const [copied] = await outDoc.copyPages(srcDoc, [p.originalIndex]);
+            const currentRot = copied.getRotation().angle;
+            copied.setRotation(degrees((currentRot + p.rotation) % 360));
+            targetPage = outDoc.addPage(copied);
+          }
+
+          // Optional Diagonal Watermark
+          if (settings.watermarkText.trim()) {
+            const { width, height } = targetPage.getSize();
+            targetPage.drawText(settings.watermarkText.trim(), {
+              x: width * 0.22,
+              y: height * 0.45,
+              size: 42,
+              font: fontBold,
+              color: rgb(0.6, 0.6, 0.6),
+              opacity: 0.28,
+              rotate: degrees(45),
+            });
+          }
+        }
+
+        const outBytes = await outDoc.save();
+        triggerDownload(
+          new Blob([outBytes as unknown as BlobPart], { type: "application/pdf" }),
+          `edited_${files[0].name}`
+        );
+        return;
+      }
+
+      // 2. IMAGES TO PDF — Direct Browser Engine
       if (activeTool === "img2pdf") {
         const pdfDoc = await PDFDocument.create();
         const a4Width = 595.28;
@@ -250,7 +411,7 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 2. MERGE PDFs — Direct Browser Engine (ලොකු PDF කිහිපයක් වුණත් Vercel limit නැතුව එකතු කරයි)
+      // 3. MERGE PDFs — Direct Browser Engine
       if (activeTool === "merge") {
         const mergedPdf = await PDFDocument.create();
         for (const pdfFile of files) {
@@ -267,23 +428,12 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 3. SERVER-SIDE PYTHON PIPELINES (Organize, Compress, Convert)
+      // 4. SERVER-SIDE PYTHON PIPELINES (Compress, Convert to Word/Images)
       const formData = new FormData();
-      let endpoint = "/api/py/organize";
+      let endpoint = "/api/py/compress";
       let outputFilename = "docuforge_output.pdf";
 
-      if (activeTool === "organize") {
-        formData.append("file", files[0]);
-        const ops = pages.map((p) => ({
-          originalIndex: p.originalIndex,
-          rotation: p.rotation,
-        }));
-        formData.append("operations", JSON.stringify(ops));
-        formData.append("watermark", settings.watermarkText);
-        formData.append("compress_level", "none");
-        endpoint = "/api/py/organize";
-        outputFilename = `edited_${files[0].name}`;
-      } else if (activeTool === "compress") {
+      if (activeTool === "compress") {
         formData.append("file", files[0]);
         formData.append("level", settings.compressLevel);
         endpoint = "/api/py/compress";
@@ -321,6 +471,8 @@ export default function DocuForgeStudioPage() {
     }
   };
 
+  const editingPageObj = pages.find((p) => p.id === editingNotePageId);
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F8F9FA] text-zinc-900">
       <StudioHeader
@@ -333,7 +485,6 @@ export default function DocuForgeStudioPage() {
         onExport={handleExport}
       />
 
-      {/* Responsive Workspace Container: Stacks vertically on mobile/tablet, side-by-side on lg+ */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
         {files.length === 0 ? (
           <FileDropzone mode={activeTool} onFilesSelected={handleFilesSelected} />
@@ -344,7 +495,6 @@ export default function DocuForgeStudioPage() {
             </div>
           ) : (
             <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Responsive Bulk Page Range Bar */}
               <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2 text-xs text-zinc-600">
                   <Scissors className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
@@ -383,6 +533,8 @@ export default function DocuForgeStudioPage() {
                 onRotateAll={handleRotateAll}
                 onDeletePage={handleDeletePage}
                 onUndoDelete={handleUndoDelete}
+                onInsertNoteAfter={handleOpenInsertNote}
+                onEditNote={handleOpenEditNote}
               />
             </div>
           )
@@ -430,6 +582,19 @@ export default function DocuForgeStudioPage() {
           isProcessing={isProcessing}
         />
       </div>
+
+      {/* Smart Handwriting-to-Typed Page Modal */}
+      <SmartNoteModal
+        isOpen={noteModalOpen}
+        insertAfterPage={insertAfterIdx + 1}
+        initialTitle={editingPageObj?.noteTitle || ""}
+        initialText={editingPageObj?.noteText || ""}
+        onClose={() => {
+          setNoteModalOpen(false);
+          setEditingNotePageId(null);
+        }}
+        onSaveNotePage={handleSaveNotePage}
+      />
     </div>
   );
 }
