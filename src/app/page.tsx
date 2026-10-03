@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
+import { PDFDocument } from "pdf-lib";
 import { InspectorSettings, PDFPageItem, ToolMode } from "@/types/document";
 import { renderPdfPagesToThumbnails } from "@/lib/pdf-client-renderer";
 import { StudioHeader } from "@/components/layout/studio-header";
@@ -15,6 +16,63 @@ const API_BASE =
   (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
     ? "http://127.0.0.1:8000"
     : "";
+
+// ලොකු පින්තූර (10MB - 50MB+) Browser එක ඇතුළෙම optimize කරලා JPEG bytes බවට හැරවීම
+async function imageFileToNormalizedJpegBytes(
+  file: File,
+  maxDimension = 2600,
+  quality = 0.88
+): Promise<{ bytes: Uint8Array; width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+
+      if (width > maxDimension || height > maxDimension) {
+        const scale = maxDimension / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas context unavailable"));
+        return;
+      }
+
+      // PNG transparent background සුදු පාටින් පිරවීම
+      ctx.fillStyle = "#FFFFFF";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob(
+        async (blob) => {
+          if (!blob) {
+            reject(new Error("Failed to encode image"));
+            return;
+          }
+          const buf = await blob.arrayBuffer();
+          resolve({ bytes: new Uint8Array(buf), width, height });
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error(`Could not load image: ${file.name}`));
+    };
+
+    img.src = objectUrl;
+  });
+}
 
 export default function DocuForgeStudioPage() {
   const [activeTool, setActiveTool] = useState<ToolMode>("organize");
@@ -138,11 +196,78 @@ export default function DocuForgeStudioPage() {
     setRangeInput("");
   };
 
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   const handleExport = async () => {
     if (files.length === 0) return;
     setIsProcessing(true);
 
     try {
+      // 1. IMAGES TO PDF — Direct Browser Engine (Vercel 4.5MB limit එක මඟහරියි, ඕනෑම ලොකු පින්තූරයක් තත්පරයෙන් PDF කරයි)
+      if (activeTool === "img2pdf") {
+        const pdfDoc = await PDFDocument.create();
+        const a4Width = 595.28;
+        const a4Height = 841.89;
+        const margin = settings.pageMargin;
+
+        for (const imgFile of files) {
+          const { bytes, width: imgW, height: imgH } = await imageFileToNormalizedJpegBytes(imgFile);
+          const embeddedJpg = await pdfDoc.embedJpg(bytes);
+
+          if (settings.pageSize === "FIT") {
+            const page = pdfDoc.addPage([imgW, imgH]);
+            page.drawImage(embeddedJpg, { x: 0, y: 0, width: imgW, height: imgH });
+          } else {
+            const isLandscape = imgW > imgH;
+            const pw = isLandscape ? a4Height : a4Width;
+            const ph = isLandscape ? a4Width : a4Height;
+            const page = pdfDoc.addPage([pw, ph]);
+
+            const availW = Math.max(50, pw - margin * 2);
+            const availH = Math.max(50, ph - margin * 2);
+            const scale = Math.min(availW / imgW, availH / imgH);
+            const drawW = imgW * scale;
+            const drawH = imgH * scale;
+            const x = (pw - drawW) / 2;
+            const y = (ph - drawH) / 2;
+
+            page.drawImage(embeddedJpg, { x, y, width: drawW, height: drawH });
+          }
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        triggerDownload(
+          new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" }),
+          "compiled_images.pdf"
+        );
+        return;
+      }
+
+      // 2. MERGE PDFs — Direct Browser Engine (ලොකු PDF කිහිපයක් වුණත් Vercel limit නැතුව එකතු කරයි)
+      if (activeTool === "merge") {
+        const mergedPdf = await PDFDocument.create();
+        for (const pdfFile of files) {
+          const buf = await pdfFile.arrayBuffer();
+          const srcDoc = await PDFDocument.load(buf);
+          const copiedPages = await mergedPdf.copyPages(srcDoc, srcDoc.getPageIndices());
+          copiedPages.forEach((p) => mergedPdf.addPage(p));
+        }
+        const mergedBytes = await mergedPdf.save();
+        triggerDownload(
+          new Blob([mergedBytes as unknown as BlobPart], { type: "application/pdf" }),
+          "merged_document.pdf"
+        );
+        return;
+      }
+
+      // 3. SERVER-SIDE PYTHON PIPELINES (Organize, Compress, Convert)
       const formData = new FormData();
       let endpoint = "/api/py/organize";
       let outputFilename = "docuforge_output.pdf";
@@ -158,16 +283,6 @@ export default function DocuForgeStudioPage() {
         formData.append("compress_level", "none");
         endpoint = "/api/py/organize";
         outputFilename = `edited_${files[0].name}`;
-      } else if (activeTool === "img2pdf") {
-        files.forEach((f) => formData.append("files", f));
-        formData.append("page_size", settings.pageSize);
-        formData.append("margin", String(settings.pageMargin));
-        endpoint = "/api/py/images-to-pdf";
-        outputFilename = "compiled_images.pdf";
-      } else if (activeTool === "merge") {
-        files.forEach((f) => formData.append("files", f));
-        endpoint = "/api/py/merge";
-        outputFilename = "merged_document.pdf";
       } else if (activeTool === "compress") {
         formData.append("file", files[0]);
         formData.append("level", settings.compressLevel);
@@ -196,12 +311,7 @@ export default function DocuForgeStudioPage() {
       }
 
       const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = outputFilename;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      triggerDownload(blob, outputFilename);
     } catch (err: unknown) {
       console.error("Export Error:", err);
       const msg = err instanceof Error ? err.message : "Ensure FastAPI server is running";
