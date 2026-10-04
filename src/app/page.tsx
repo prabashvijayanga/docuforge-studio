@@ -2,15 +2,22 @@
 import React, { useEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import { PDFDocument, StandardFonts, rgb, degrees } from "pdf-lib";
-import { InspectorSettings, PDFPageItem, ToolMode } from "@/types/document";
+import {
+  ConvertDirection,
+  ConvertTargetFormat,
+  InspectorSettings,
+  PDFPageItem,
+  ToolMode,
+} from "@/types/document";
 import { renderPdfPagesToThumbnails } from "@/lib/pdf-client-renderer";
 import { StudioHeader } from "@/components/layout/studio-header";
+import { LandingHero } from "@/components/layout/landing-hero";
 import { FileDropzone } from "@/components/workspace/file-dropzone";
 import { PageThumbnailGrid } from "@/components/workspace/page-thumbnail-grid";
 import { SmartNoteModal } from "@/components/workspace/smart-note-modal";
 import { InspectorSidebar } from "@/components/layout/inspector-sidebar";
 import { formatBytes } from "@/lib/utils";
-import { FileText, Trash2, Scissors } from "lucide-react";
+import { FileText, Trash2, Scissors, ArrowLeft } from "lucide-react";
 
 const API_BASE =
   typeof window !== "undefined" &&
@@ -97,6 +104,7 @@ function wrapTextLines(text: string, maxCharsPerLine = 78): string[] {
 }
 
 export default function DocuForgeStudioPage() {
+  const [showLanding, setShowLanding] = useState(true);
   const [activeTool, setActiveTool] = useState<ToolMode>("organize");
   const [engineOnline, setEngineOnline] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -135,6 +143,24 @@ export default function DocuForgeStudioPage() {
 
   const handleSelectTool = (tool: ToolMode) => {
     setActiveTool(tool);
+    setShowLanding(false);
+    handleReset();
+  };
+
+  const handleLaunchFromLanding = (
+    tool: ToolMode,
+    convertDir?: ConvertDirection,
+    convertFmt?: ConvertTargetFormat
+  ) => {
+    setActiveTool(tool);
+    if (convertDir || convertFmt) {
+      setSettings((prev) => ({
+        ...prev,
+        ...(convertDir ? { convertDirection: convertDir } : {}),
+        ...(convertFmt ? { convertFormat: convertFmt } : {}),
+      }));
+    }
+    setShowLanding(false);
     handleReset();
   };
 
@@ -282,7 +308,6 @@ export default function DocuForgeStudioPage() {
     setIsProcessing(true);
 
     try {
-      // 1. ORGANIZE & SMART TYPED NOTES — Client-Side Engine
       if (activeTool === "organize") {
         const srcBytes = await files[0].arrayBuffer();
         const srcDoc = await PDFDocument.load(srcBytes);
@@ -365,7 +390,6 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 2. IMAGES TO PDF — Client-Side Engine
       if (activeTool === "img2pdf") {
         const pdfDoc = await PDFDocument.create();
         const a4Width = 595.28;
@@ -405,7 +429,6 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 3. MERGE PDFs — Client-Side Engine
       if (activeTool === "merge") {
         const mergedPdf = await PDFDocument.create();
         for (const pdfFile of files) {
@@ -422,7 +445,6 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 4. SERVER-SIDE PYTHON PIPELINES (Compress + Bi-Directional Converters)
       const formData = new FormData();
       let endpoint = "/api/py/compress";
       const baseName = files[0].name.replace(/\.[^/.]+$/, "");
@@ -437,11 +459,9 @@ export default function DocuForgeStudioPage() {
         formData.append("file", files[0]);
 
         if (settings.convertDirection === "other_to_pdf") {
-          // Reverse Conversion: DOCX / PPTX / XLSX / MD / HTML / TXT -> PDF
           endpoint = "/api/py/office-to-pdf";
           outputFilename = `${baseName}.pdf`;
         } else {
-          // Forward Conversion: PDF -> 7 Target Formats
           switch (settings.convertFormat) {
             case "docx":
               endpoint = "/api/py/pdf-to-word";
@@ -504,6 +524,8 @@ export default function DocuForgeStudioPage() {
     <div className="min-h-screen flex flex-col bg-[#F8F9FA] text-zinc-900">
       <StudioHeader
         activeTool={activeTool}
+        showLanding={showLanding}
+        onGoHome={() => setShowLanding(true)}
         onSelectTool={handleSelectTool}
         engineOnline={engineOnline}
         hasFiles={files.length > 0}
@@ -512,112 +534,130 @@ export default function DocuForgeStudioPage() {
         onExport={handleExport}
       />
 
-      <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
-        {files.length === 0 ? (
-          <FileDropzone
-            mode={activeTool}
-            convertDirection={settings.convertDirection}
-            onToggleConvertDirection={(dir) => {
-              setSettings((prev) => ({ ...prev, convertDirection: dir }));
-              handleReset();
-            }}
-            onFilesSelected={handleFilesSelected}
-          />
-        ) : activeTool === "organize" ? (
-          loadingThumbnails ? (
-            <div className="flex-1 py-20 flex items-center justify-center font-mono text-xs text-zinc-500">
-              RENDERING PDF SHEETS IN MEMORY...
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <div className="flex items-center gap-2 text-xs text-zinc-600">
-                  <Scissors className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                  <span className="font-medium text-zinc-800">Quick Range Selector:</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="e.g. 1-5, 12, 20-45"
-                    value={rangeInput}
-                    onChange={(e) => setRangeInput(e.target.value)}
-                    className="px-3 py-1.5 sm:py-1 text-xs font-mono bg-zinc-50 border border-zinc-300 rounded-md flex-1 sm:w-44 focus:outline-none focus:border-zinc-900"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleBulkRangeAction("remove")}
-                    className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700 rounded border border-zinc-200 transition-colors"
-                  >
-                    Remove
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleBulkRangeAction("keep")}
-                    className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white rounded transition-colors"
-                  >
-                    Keep Only
-                  </button>
-                </div>
+      {showLanding ? (
+        <LandingHero engineOnline={engineOnline} onLaunchTool={handleLaunchFromLanding} />
+      ) : (
+        <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
+          {files.length === 0 ? (
+            <div className="flex-1 flex flex-col">
+              {/* Sub-bar to return to All Tools Overview */}
+              <div className="px-4 sm:px-8 pt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowLanding(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-900"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back to All Tools Overview</span>
+                </button>
               </div>
 
-              <PageThumbnailGrid
-                pages={pages}
-                canUndo={deletedHistory.length > 0}
-                onReorder={handleReorder}
-                onRotatePage={handleRotatePage}
-                onRotateAll={handleRotateAll}
-                onDeletePage={handleDeletePage}
-                onUndoDelete={handleUndoDelete}
-                onInsertNoteAfter={handleOpenInsertNote}
-                onEditNote={handleOpenEditNote}
+              <FileDropzone
+                mode={activeTool}
+                convertDirection={settings.convertDirection}
+                onToggleConvertDirection={(dir) => {
+                  setSettings((prev) => ({ ...prev, convertDirection: dir }));
+                  handleReset();
+                }}
+                onFilesSelected={handleFilesSelected}
               />
             </div>
-          )
-        ) : (
-          <div className="flex-1 p-4 sm:p-8 overflow-y-auto">
-            <div className="max-w-2xl mx-auto bg-white border border-zinc-200 rounded-lg p-4 sm:p-6">
-              <h3 className="text-sm font-semibold text-zinc-900 mb-4">
-                Queued Files ({files.length})
-              </h3>
-              <div className="divide-y divide-zinc-100">
-                {files.map((file, idx) => (
-                  <div key={idx} className="py-3 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium text-zinc-800 truncate">
-                          {file.name}
-                        </div>
-                        <div className="font-mono text-[10px] text-zinc-400">
-                          {formatBytes(file.size)}
-                        </div>
-                      </div>
-                    </div>
+          ) : activeTool === "organize" ? (
+            loadingThumbnails ? (
+              <div className="flex-1 py-20 flex items-center justify-center font-mono text-xs text-zinc-500">
+                RENDERING PDF SHEETS IN MEMORY...
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="bg-white border-b border-zinc-200 px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 text-xs text-zinc-600">
+                    <Scissors className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                    <span className="font-medium text-zinc-800">Quick Range Selector:</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="e.g. 1-5, 12, 20-45"
+                      value={rangeInput}
+                      onChange={(e) => setRangeInput(e.target.value)}
+                      className="px-3 py-1.5 sm:py-1 text-xs font-mono bg-zinc-50 border border-zinc-300 rounded-md flex-1 sm:w-44 focus:outline-none focus:border-zinc-900"
+                    />
                     <button
                       type="button"
-                      onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
-                      className="p-1.5 text-zinc-400 hover:text-red-600 rounded shrink-0"
+                      onClick={() => handleBulkRangeAction("remove")}
+                      className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-700 rounded border border-zinc-200 transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      Remove
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBulkRangeAction("keep")}
+                      className="px-2.5 py-1.5 sm:py-1 text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white rounded transition-colors"
+                    >
+                      Keep Only
                     </button>
                   </div>
-                ))}
+                </div>
+
+                <PageThumbnailGrid
+                  pages={pages}
+                  canUndo={deletedHistory.length > 0}
+                  onReorder={handleReorder}
+                  onRotatePage={handleRotatePage}
+                  onRotateAll={handleRotateAll}
+                  onDeletePage={handleDeletePage}
+                  onUndoDelete={handleUndoDelete}
+                  onInsertNoteAfter={handleOpenInsertNote}
+                  onEditNote={handleOpenEditNote}
+                />
+              </div>
+            )
+          ) : (
+            <div className="flex-1 p-4 sm:p-8 overflow-y-auto">
+              <div className="max-w-2xl mx-auto bg-white border border-zinc-200 rounded-lg p-4 sm:p-6">
+                <h3 className="text-sm font-semibold text-zinc-900 mb-4">
+                  Queued Files ({files.length})
+                </h3>
+                <div className="divide-y divide-zinc-100">
+                  {files.map((file, idx) => (
+                    <div key={idx} className="py-3 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-zinc-800 truncate">
+                            {file.name}
+                          </div>
+                          <div className="font-mono text-[10px] text-zinc-400">
+                            {formatBytes(file.size)}
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-zinc-400 hover:text-red-600 rounded shrink-0"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <InspectorSidebar
-          mode={activeTool}
-          files={files}
-          pageCount={pages.length}
-          settings={settings}
-          onUpdateSettings={(partial) => setSettings((prev) => ({ ...prev, ...partial }))}
-          onExport={handleExport}
-          isProcessing={isProcessing}
-          onResetFiles={handleReset}
-        />
-      </div>
+          <InspectorSidebar
+            mode={activeTool}
+            files={files}
+            pageCount={pages.length}
+            settings={settings}
+            onUpdateSettings={(partial) => setSettings((prev) => ({ ...prev, ...partial }))}
+            onExport={handleExport}
+            isProcessing={isProcessing}
+            onResetFiles={handleReset}
+          />
+        </div>
+      )}
 
       <SmartNoteModal
         isOpen={noteModalOpen}
