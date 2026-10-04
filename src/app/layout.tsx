@@ -1,7 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
-// CSS is bundled by Next.js; TypeScript has no module declaration for this side-effect import.
-// @ts-expect-error -- Next.js resolves CSS imports at build time.
 import "./globals.css";
 
 const inter = Inter({
@@ -16,48 +14,42 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL || "https://docuforge-studio.vercel.app";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://docuforge-studio.vercel.app";
 
 export const viewport: Viewport = {
+  themeColor: "#18181B",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
-  themeColor: "#09090B",
 };
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default:
-      "DocuForge Studio | Free PDF Editor, Smart Handwriting Notes, Study Quiz & Bi-Directional Converter",
+    default: "DocuForge Studio | Free PDF Editor, Smart Notes, Quiz & Multi-Format Converter",
     template: "%s | DocuForge Studio",
   },
   description:
-    "All-in-one privacy-first document studio. Organize, split & merge 100+ page PDFs, convert Handwriting to Typed PDF Notes, generate automatic Short Notes & MCQ Quizzes from lecture slides, and convert bi-directionally across PDF, Word (.DOCX), PowerPoint (.PPTX), Excel (.XLSX), Markdown, and Images with zero storage.",
+    "All-in-one zero-storage PDF workspace. Organize & split 100+ page PDFs, convert handwriting to typed PDF notes, auto-generate study short notes & MCQ quizzes, and convert bi-directionally across PDF, Word (.DOCX), PowerPoint (.PPTX), Excel (.XLSX), Markdown, and Images.",
   keywords: [
-    "DocuForge",
     "DocuForge Studio",
-    "Free PDF Editor Online",
-    "PDF to Word Converter",
-    "PDF to PowerPoint PPTX",
-    "PDF to Excel XLSX",
-    "PPTX to PDF Converter",
-    "Word to PDF Converter",
-    "Handwriting to Text PDF Note",
-    "Stylus PDF Note Taking",
-    "Lecture Slides to Short Notes",
-    "Automatic MCQ Quiz Generator from PDF",
-    "Study Pack Generator",
-    "Images to PDF Compiler",
-    "Merge PDF Online Free",
-    "Compress PDF Without Losing Quality",
-    "Zero Storage Privacy PDF Tool",
+    "free PDF editor online",
+    "PDF organizer and splitter",
+    "handwriting to text PDF note",
+    "lecture PDF to short notes generator",
+    "PDF to MCQ quiz generator for students",
+    "PDF to PowerPoint PPTX converter",
+    "PDF to Word DOCX converter",
+    "PDF to Excel XLSX table extractor",
+    "PPTX to PDF converter",
+    "images to PDF compiler",
+    "merge PDF files client side",
+    "compress PDF online free",
+    "zero storage private PDF tools",
   ],
   authors: [{ name: "DocuForge Engineering" }],
   creator: "DocuForge Studio",
   publisher: "DocuForge Studio",
-  category: "Productivity & Education",
   alternates: {
     canonical: "/",
   },
@@ -77,18 +69,17 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: SITE_URL,
     siteName: "DocuForge Studio",
-    title:
-      "DocuForge Studio — Smart PDF Workspace, Handwriting-to-Text & Study Quiz Generator",
+    title: "DocuForge Studio — Precision PDF Engineering, Smart Notes & Study Lab",
     description:
-      "Edit & reorder PDFs, write with a stylus to insert typed note pages, generate instant Short Notes & MCQ Quizzes, and convert across 13+ formats (DOCX, PPTX, XLSX, MD, HTML, Images).",
+      "Organize large PDFs, insert stylus handwriting-to-typed note pages, generate instant revision short notes & quizzes, and convert across 13+ document formats.",
   },
   twitter: {
     card: "summary_large_image",
-    title:
-      "DocuForge Studio | Smart PDF Editor, Handwriting Notes & Study Lab",
+    title: "DocuForge Studio | Smart PDF Workspace & Study Lab",
     description:
-      "Zero-storage PDF workspace with real-time handwriting-to-text pages, automatic Short Note & MCQ Quiz generation, and bi-directional Office converters.",
+      "Zero-storage PDF organizer, handwriting-to-typed note studio, auto short-note & quiz generator, and bi-directional Office converter.",
   },
+  category: "productivity",
 };
 
 export default function RootLayout({
@@ -96,7 +87,6 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // Google Rich Results JSON-LD Schema (SoftwareApplication + FAQPage)
   const jsonLd = {
     "@context": "https://schema.org",
     "@graph": [
@@ -105,22 +95,19 @@ export default function RootLayout({
         name: "DocuForge Studio",
         url: SITE_URL,
         applicationCategory: "BusinessApplication, EducationalApplication",
-        operatingSystem: "Any (Web Browser, iOS, Android, Windows, macOS)",
+        operatingSystem: "All (Web Browser, iOS, Android, Windows, macOS)",
         offers: {
           "@type": "Offer",
           price: "0",
           priceCurrency: "USD",
         },
-        description:
-          "Precision PDF workspace featuring drag-and-drop page organization, stylus handwriting-to-typed note insertion, automatic lecture Short Notes & MCQ Quiz generation, and 13+ bi-directional document converters.",
         featureList: [
-          "Organize, Reorder, Rotate & Bulk Split 100+ Page PDFs",
-          "Smart Handwriting-to-Typed Note Page Insertion",
-          "Automatic Short Note & Interactive MCQ Quiz Generator for Students",
-          "Client-Side High-Resolution Images to PDF Compiler",
-          "Instant Multi-PDF Merger with Zero Upload Limits",
-          "Bi-Directional PDF Converter (Word DOCX, PowerPoint PPTX, Excel XLSX, Markdown, HTML5, TXT, PNG ZIP)",
-          "Zero-Storage Ephemeral RAM Processing",
+          "Interactive PDF Page Organizer, Splitter & Rotator",
+          "Smart Stylus Handwriting-to-Typed PDF Note Insertion",
+          "Built-In NLP Study Lab: Automatic Short Notes & Interactive MCQ Quiz Generator",
+          "Bi-Directional Converter: PDF to DOCX, PPTX, XLSX, Markdown, HTML5, TXT, PNG",
+          "Client-Side High-Resolution Images to PDF Compiler & PDF Merger",
+          "Zero-Storage Ephemeral RAM Stream Privacy",
         ],
       },
       {
@@ -131,23 +118,23 @@ export default function RootLayout({
             name: "Is DocuForge Studio completely free and private?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes. DocuForge Studio is 100% free with no daily limits. Client-side tools run directly in your browser memory, and server-side conversions use ephemeral RAM streams with zero database or disk storage.",
+              text: "Yes. DocuForge Studio runs on a zero-storage architecture. Client-side tools run directly in your browser memory, and server-side conversions use volatile RAM streams that are purged immediately after download.",
             },
           },
           {
             "@type": "Question",
-            name: "How does the Smart Handwriting-to-Typed PDF Note feature work?",
+            name: "How does the Short Note and Quiz Generator work?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "You can insert a new page after any PDF sheet and write using your tablet stylus (S-Pen, Apple Pencil) or finger. Our Spatial Word-Cluster Engine detects word boundaries and converts your handwriting into crisp vector typed text inside the PDF.",
+              text: "Students can upload any lecture PDF, PowerPoint (.PPTX), Word (.DOCX), or text handout to automatically extract key concepts, definitions, section-by-section revision bullet points, and an interactive multiple-choice practice quiz.",
             },
           },
           {
             "@type": "Question",
-            name: "Can I generate Short Notes and Quizzes from lecture slides?",
+            name: "Can I write with a tablet stylus and convert handwriting to typed PDF pages?",
             acceptedAnswer: {
               "@type": "Answer",
-              text: "Yes. Drop any PDF, PowerPoint (.PPTX), Word (.DOCX), or text handout into the Short Note & Quiz tool to automatically extract key topics, definitions, section summaries, and an interactive multiple-choice practice quiz.",
+              text: "Yes. Using the Smart Note Studio inside the Organize tool, you can write with an S-Pen, Apple Pencil, or finger and automatically convert your handwriting into crisp vector-typed A4 pages inserted anywhere in your PDF.",
             },
           },
         ],
