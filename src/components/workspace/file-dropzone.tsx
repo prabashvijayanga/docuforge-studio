@@ -26,7 +26,7 @@ export function FileDropzone({
     mode === "img2pdf"
       ? "image/jpeg,image/png,image/webp"
       : isReverseConvert
-      ? ".docx,.pptx,.xlsx,.md,.html,.htm,.txt,.csv"
+      ? ".docx,.doc,.pptx,.ppt,.xlsx,.xls,.md,.html,.htm,.txt,.csv"
       : "application/pdf";
 
   const handleDrop = (e: React.DragEvent) => {

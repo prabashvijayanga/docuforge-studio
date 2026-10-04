@@ -291,30 +291,31 @@ async def pdf_to_txt_endpoint(file: UploadFile = File(...)):
 
 
 # UNIVERSAL REVERSE CONVERTER: DOCX / PPTX / XLSX / MD / HTML / TXT -> PDF
+# UNIVERSAL REVERSE CONVERTER: DOCX/DOC, PPTX/PPT, XLSX/XLS, MD, HTML, TXT -> PDF
 @app.post("/api/py/office-to-pdf")
 async def office_to_pdf_endpoint(file: UploadFile = File(...)):
     data = await file.read(MAX_FILE_SIZE_BYTES + 1)
     if len(data) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="File exceeds the 50MB security limit.")
 
-    fname = (file.filename or "document").lower()
+    fname = (file.filename or "document").lower().strip()
     try:
-        if fname.endswith(".docx"):
+        if fname.endswith((".docx", ".doc")):
             out = docx_to_pdf_stream(data)
-        elif fname.endswith(".pptx"):
+        elif fname.endswith((".pptx", ".ppt")):
             out = pptx_to_pdf_stream(data)
-        elif fname.endswith(".xlsx"):
+        elif fname.endswith((".xlsx", ".xls")):
             out = xlsx_to_pdf_stream(data)
-        elif fname.endswith(".md") or fname.endswith(".markdown"):
+        elif fname.endswith((".md", ".markdown")):
             out = md_to_pdf_stream(data)
-        elif fname.endswith(".html") or fname.endswith(".htm"):
+        elif fname.endswith((".html", ".htm")):
             out = html_to_pdf_stream(data)
-        elif fname.endswith(".txt") or fname.endswith(".csv"):
+        elif fname.endswith((".txt", ".csv")):
             out = txt_to_pdf_stream(data)
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Unsupported file type. Upload .docx, .pptx, .xlsx, .md, .html, or .txt",
+                detail="Unsupported file type. Upload .pptx, .ppt, .docx, .doc, .xlsx, .xls, .md, .html, or .txt",
             )
 
         return StreamingResponse(
@@ -325,5 +326,5 @@ async def office_to_pdf_endpoint(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Office-to-PDF error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert {fname} to PDF.")
+        logger.error(f"Office-to-PDF error ({fname}): {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert {fname} to PDF: {str(e)}")
