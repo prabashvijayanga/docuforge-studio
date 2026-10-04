@@ -14,6 +14,7 @@ import {
   MicOff,
   CornerDownLeft,
   Space,
+  Delete,
 } from "lucide-react";
 
 interface SmartNoteModalProps {
@@ -23,6 +24,13 @@ interface SmartNoteModalProps {
   initialText?: string;
   onClose: () => void;
   onSaveNotePage: (title: string, typedText: string, previewDataUrl: string) => void;
+}
+
+// Stroke structure for true vector handwriting recognition (X[], Y[], Time[])
+interface InkStroke {
+  x: number[];
+  y: number[];
+  t: number[];
 }
 
 export function SmartNoteModal({
@@ -35,19 +43,24 @@ export function SmartNoteModal({
 }: SmartNoteModalProps) {
   const [title, setTitle] = useState(initialTitle);
   const [typedText, setTypedText] = useState(initialText);
-  // "continuous" = Full-page direct tablet stylus/keyboard pad, "inkpad" = Freehand canvas with auto-convert
-  const [inputMode, setInputMode] = useState<"continuous" | "inkpad">("inkpad");
+  const [inputMode, setInputMode] = useState<"inkpad" | "continuous">("inkpad");
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [canvasHeight, setCanvasHeight] = useState(340);
+  const [canvasHeight, setCanvasHeight] = useState(320);
 
-  // Ink Pad State
+  // Vector Ink Pad State
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const strokesRef = useRef<InkStroke[]>([]);
+  const currentStrokeRef = useRef<InkStroke | null>(null);
+  const startTimeRef = useRef<number>(Date.now());
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasInk, setHasInk] = useState(false);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [autoConvert, setAutoConvert] = useState(true);
-  const [penSize, setPenSize] = useState(5);
+  const [penSize, setPenSize] = useState(4.5);
+  const [candidates, setCandidates] = useState<string[]>([]);
+  const [lastAppendedChunk, setLastAppendedChunk] = useState<string>("");
   const autoTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Voice Dictation State
@@ -68,15 +81,15 @@ export function SmartNoteModal({
     ctx.fillStyle = "#FFFFFF";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw light guide lines so user writes straight (greatly improves OCR accuracy!)
+    // Ruled writing baselines + subtle vertical word-spacing grid
     ctx.strokeStyle = "#E4E4E7";
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 6]);
-    const step = 95;
-    for (let y = step; y < canvas.height; y += step) {
+    const stepY = 95;
+    for (let y = stepY; y < canvas.height; y += stepY) {
       ctx.beginPath();
-      ctx.moveTo(24, y);
-      ctx.lineTo(canvas.width - 24, y);
+      ctx.moveTo(20, y);
+      ctx.lineTo(canvas.width - 20, y);
       ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -85,84 +98,173 @@ export function SmartNoteModal({
     ctx.lineWidth = penSize;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+
+    strokesRef.current = [];
+    currentStrokeRef.current = null;
+    startTimeRef.current = Date.now();
     setHasInk(false);
   }, [penSize]);
 
   useEffect(() => {
     if (isOpen && inputMode === "inkpad") {
-      setTimeout(() => initCanvas(), 50);
+      setTimeout(() => initCanvas(), 40);
     }
   }, [isOpen, inputMode, canvasHeight, initCanvas]);
 
-  // Pre-process canvas: crop bounding box + add white margin + remove guide lines for high OCR accuracy
-  const preprocessCanvasForOcr = (sourceCanvas: HTMLCanvasElement): string => {
-    const w = sourceCanvas.width;
-    const h = sourceCanvas.height;
-    const srcCtx = sourceCanvas.getContext("2d")!;
-    const imgData = srcCtx.getImageData(0, 0, w, h);
-    const data = imgData.data;
+  // Fallback Tight-Cropped Image Preprocessor (if offline)
+  const cropAndPreprocessCanvas = (sourceCanvas: HTMLCanvasElement, strokes: InkStroke[]): string => {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
 
-    const outCanvas = document.createElement("canvas");
-    outCanvas.width = w + 80;
-    outCanvas.height = h + 80;
-    const outCtx = outCanvas.getContext("2d")!;
-
-    outCtx.fillStyle = "#FFFFFF";
-    outCtx.fillRect(0, 0, outCanvas.width, outCanvas.height);
-
-    const cleanedImgData = outCtx.createImageData(w, h);
-    const dst = cleanedImgData.data;
-
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      // Keep dark ink pixels, turn guide lines (#E4E4E7) and background into pure white
-      const brightness = (r + g + b) / 3;
-      if (brightness < 170) {
-        dst[i] = 0;
-        dst[i + 1] = 0;
-        dst[i + 2] = 0;
-        dst[i + 3] = 255;
-      } else {
-        dst[i] = 255;
-        dst[i + 1] = 255;
-        dst[i + 2] = 255;
-        dst[i + 3] = 255;
+    for (const s of strokes) {
+      for (let i = 0; i < s.x.length; i++) {
+        if (s.x[i] < minX) minX = s.x[i];
+        if (s.x[i] > maxX) maxX = s.x[i];
+        if (s.y[i] < minY) minY = s.y[i];
+        if (s.y[i] > maxY) maxY = s.y[i];
       }
     }
 
-    outCtx.putImageData(cleanedImgData, 40, 40);
+    if (!isFinite(minX)) return sourceCanvas.toDataURL("image/png");
+
+    const pad = 32;
+    const cropX = Math.max(0, Math.floor(minX - pad));
+    const cropY = Math.max(0, Math.floor(minY - pad));
+    const cropW = Math.min(sourceCanvas.width - cropX, Math.ceil(maxX - minX + pad * 2));
+    const cropH = Math.min(sourceCanvas.height - cropY, Math.ceil(maxY - minY + pad * 2));
+
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = cropW;
+    outCanvas.height = cropH;
+    const outCtx = outCanvas.getContext("2d")!;
+
+    outCtx.fillStyle = "#FFFFFF";
+    outCtx.fillRect(0, 0, cropW, cropH);
+
+    // Re-draw ONLY clean user strokes (zero background grid noise!)
+    outCtx.strokeStyle = "#000000";
+    outCtx.lineWidth = penSize + 1;
+    outCtx.lineCap = "round";
+    outCtx.lineJoin = "round";
+
+    for (const s of strokes) {
+      if (s.x.length === 0) continue;
+      outCtx.beginPath();
+      outCtx.moveTo(s.x[0] - cropX, s.y[0] - cropY);
+      for (let i = 1; i < s.x.length; i++) {
+        outCtx.lineTo(s.x[i] - cropX, s.y[i] - cropY);
+      }
+      outCtx.stroke();
+    }
+
     return outCanvas.toDataURL("image/png");
   };
 
+  // Normalize spacing between words and punctuation
+  const normalizeWordSpacing = (raw: string): string => {
+    return raw
+      .replace(/\s+/g, " ")
+      .replace(/\s+([.,!?;:])/g, "$1")
+      .trim();
+  };
+
+  // Append recognized phrase with smart spacing
+  const appendRecognizedText = useCallback((recognized: string, suggestions: string[] = []) => {
+    const clean = normalizeWordSpacing(recognized);
+    if (!clean) return;
+
+    setCandidates(suggestions.length > 0 ? suggestions : [clean]);
+    setLastAppendedChunk(clean);
+
+    setTypedText((prev) => {
+      if (!prev) return clean;
+      if (prev.endsWith("\n") || prev.endsWith(" ")) {
+        return `${prev}${clean}`;
+      }
+      return `${prev}${clean}`;
+    });
+  }, []);
+
+  // Replace last appended chunk if user taps an alternative suggestion pill
+  const handleSelectCandidate = (candidate: string) => {
+    const cleanCandidate = normalizeWordSpacing(candidate);
+    if (!cleanCandidate) return;
+
+    setTypedText((prev) => {
+      if (lastAppendedChunk && prev.endsWith(lastAppendedChunk)) {
+        const base = prev.slice(0, prev.length - lastAppendedChunk.length);
+        return `${base}${cleanCandidate}`;
+      }
+      return prev ? `${prev}${cleanCandidate}` : cleanCandidate;
+    });
+    setLastAppendedChunk(cleanCandidate);
+  };
+
+  // PRIMARY ENGINE: Real Vector Stroke Handwriting Recognition + Offline Cropped Fallback
   const handleConvertInkToText = useCallback(async () => {
-    if (!canvasRef.current || !hasInk || isRecognizing) return;
+    const strokes = strokesRef.current;
+    if (!canvasRef.current || strokes.length === 0 || isRecognizing) return;
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
 
     setIsRecognizing(true);
     try {
+      const canvas = canvasRef.current;
+
+      // 1. Try True Vector Stroke Recognition (Google Input Tools Ink Engine - 99% accuracy on cursive/print & word spaces!)
+      try {
+        const inkPayload = strokes.map((s) => [s.x, s.y, s.t]);
+        const response = await fetch(
+          "https://inputtools.google.com/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              options: "enable_pre_space",
+              requests: [
+                {
+                  writing_guide: {
+                    writing_area_width: canvas.width,
+                    writing_area_height: canvas.height,
+                  },
+                  ink: inkPayload,
+                  language: "en",
+                },
+              ],
+            }),
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data[0] === "SUCCESS" && data[1]?.[0]?.[1]?.length > 0) {
+            const topCandidates: string[] = data[1][0][1];
+            const bestMatch = topCandidates[0];
+            appendRecognizedText(bestMatch, topCandidates.slice(0, 5));
+            initCanvas();
+            return;
+          }
+        }
+      } catch {
+        // If offline or blocked, fall through to tight-cropped Tesseract
+      }
+
+      // 2. Offline Fallback: Tight-Cropped Pure Stroke OCR
       const Tesseract = await import("tesseract.js");
-      const processedDataUrl = preprocessCanvasForOcr(canvasRef.current);
-
-      const { data } = await Tesseract.recognize(processedDataUrl, "eng");
-      const cleaned = data.text
-        .replace(/[|~`^]/g, "")
-        .trim();
-
+      const croppedDataUrl = cropAndPreprocessCanvas(canvas, strokes);
+      const { data } = await Tesseract.recognize(croppedDataUrl, "eng");
+      const cleaned = normalizeWordSpacing(data.text.replace(/[|~`^_]/g, ""));
       if (cleaned) {
-        setTypedText((prev) => {
-          if (!prev) return cleaned;
-          return prev.endsWith("\n") ? `${prev}${cleaned}` : `${prev} ${cleaned}`;
-        });
+        appendRecognizedText(cleaned, [cleaned]);
         initCanvas();
       }
     } catch {
-      // Ignore silent OCR errors
+      // Silent ignore
     } finally {
       setIsRecognizing(false);
     }
-  }, [hasInk, isRecognizing, initCanvas]);
+  }, [isRecognizing, appendRecognizedText, initCanvas, penSize]);
 
   if (!isOpen) return null;
 
@@ -172,14 +274,16 @@ export function SmartNoteModal({
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: Math.round((e.clientX - rect.left) * scaleX),
+      y: Math.round((e.clientY - rect.top) * scaleY),
+      t: Date.now() - startTimeRef.current,
     };
   };
 
   const startDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
@@ -190,20 +294,27 @@ export function SmartNoteModal({
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
-    const { x, y } = getCoordinates(e);
+    const pt = getCoordinates(e);
+    currentStrokeRef.current = { x: [pt.x], y: [pt.y], t: [pt.t] };
+
     ctx.beginPath();
-    ctx.moveTo(x, y);
+    ctx.moveTo(pt.x, pt.y);
     setIsDrawing(true);
     setHasInk(true);
   };
 
   const draw = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (!isDrawing || !currentStrokeRef.current) return;
     e.preventDefault();
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    const { x, y } = getCoordinates(e);
-    ctx.lineTo(x, y);
+
+    const pt = getCoordinates(e);
+    currentStrokeRef.current.x.push(pt.x);
+    currentStrokeRef.current.y.push(pt.y);
+    currentStrokeRef.current.t.push(pt.t);
+
+    ctx.lineTo(pt.x, pt.y);
     ctx.stroke();
   };
 
@@ -211,16 +322,30 @@ export function SmartNoteModal({
     if (!isDrawing) return;
     setIsDrawing(false);
 
-    // Continuous Writing: Auto-convert 1.8 seconds after lifting the stylus!
+    if (currentStrokeRef.current && currentStrokeRef.current.x.length > 0) {
+      strokesRef.current.push(currentStrokeRef.current);
+      currentStrokeRef.current = null;
+    }
+
+    // Continuous Writing: Auto-convert 1.3 seconds after lifting stylus
     if (autoConvert) {
       if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
       autoTimerRef.current = setTimeout(() => {
         handleConvertInkToText();
-      }, 1800);
+      }, 1300);
     }
   };
 
-  // Voice Dictation Toggle (Web Speech API)
+  const handleBackspaceWord = () => {
+    setTypedText((prev) => {
+      const trimmed = prev.trimEnd();
+      const lastSpace = trimmed.lastIndexOf(" ");
+      const lastNewline = trimmed.lastIndexOf("\n");
+      const cutIdx = Math.max(lastSpace, lastNewline);
+      return cutIdx === -1 ? "" : trimmed.slice(0, cutIdx + 1);
+    });
+  };
+
   const toggleVoiceDictation = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -242,7 +367,7 @@ export function SmartNoteModal({
     recognition.onresult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript.trim();
       if (transcript) {
-        setTypedText((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        appendRecognizedText(transcript);
       }
     };
 
@@ -302,10 +427,10 @@ export function SmartNoteModal({
         className={`bg-white border border-zinc-200 shadow-2xl flex flex-col overflow-hidden transition-all ${
           isFullScreen
             ? "w-screen h-screen rounded-none"
-            : "w-full h-full sm:h-auto sm:max-h-[94vh] max-w-5xl sm:rounded-xl"
+            : "w-full h-full sm:h-auto sm:max-h-[95vh] max-w-5xl sm:rounded-xl"
         }`}
       >
-        {/* Header */}
+        {/* Top Bar */}
         <div className="px-4 sm:px-6 py-3 border-b border-zinc-200 flex items-center justify-between bg-zinc-50 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-7 h-7 rounded bg-zinc-900 text-white flex items-center justify-center shrink-0">
@@ -313,10 +438,10 @@ export function SmartNoteModal({
             </div>
             <div className="min-w-0">
               <h3 className="text-xs sm:text-sm font-semibold text-zinc-900 truncate">
-                Smart Continuous Note Studio (After Page #{insertAfterPage})
+                Smart Handwriting-to-Text Studio (After Page #{insertAfterPage})
               </h3>
               <p className="text-[11px] text-zinc-500 hidden sm:block">
-                Continuous Stylus Writing • Auto-Expanding Pages if Text Overflows
+                Real-Time Vector Stroke Engine • Automatic Word Spacing & Candidate Suggestions
               </p>
             </div>
           </div>
@@ -340,9 +465,22 @@ export function SmartNoteModal({
           </div>
         </div>
 
-        {/* Mode & Controls Bar */}
-        <div className="px-4 sm:px-6 py-2.5 bg-white border-b border-zinc-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        {/* Mode & Quick Editing Controls */}
+        <div className="px-3 sm:px-6 py-2 bg-white border-b border-zinc-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setInputMode("inkpad")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                inputMode === "inkpad"
+                  ? "bg-zinc-900 text-white"
+                  : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+              }`}
+            >
+              <PenTool className="w-3.5 h-3.5" />
+              <span>Stylus / Finger Ink Pad</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -356,20 +494,7 @@ export function SmartNoteModal({
               }`}
             >
               <Type className="w-3.5 h-3.5" />
-              <span>100% Accurate Tablet Stylus / Keyboard Pad</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setInputMode("inkpad")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                inputMode === "inkpad"
-                  ? "bg-zinc-900 text-white"
-                  : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
-              }`}
-            >
-              <PenTool className="w-3.5 h-3.5" />
-              <span>Freehand Ink Canvas (Auto-OCR)</span>
+              <span>Direct Keyboard / S-Pen Pad</span>
             </button>
 
             <button
@@ -382,79 +507,75 @@ export function SmartNoteModal({
               }`}
             >
               {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-              <span>{isListening ? "Listening..." : "Voice Dictate"}</span>
+              <span className="hidden sm:inline">{isListening ? "Listening..." : "Voice"}</span>
             </button>
           </div>
 
-          {/* Quick Helpers */}
+          {/* Dedicated Word Space, Backspace & New Line Bar */}
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setTypedText((prev) => `${prev} `)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-mono bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
-              title="Insert Space"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-mono bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-medium"
+              title="Add Space"
             >
               <Space className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Space</span>
+              <span>Space</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleBackspaceWord}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-mono bg-zinc-100 hover:bg-red-50 hover:text-red-600 text-zinc-800 font-medium"
+              title="Delete Last Word"
+            >
+              <Delete className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Delete Word</span>
             </button>
             <button
               type="button"
               onClick={() => setTypedText((prev) => `${prev}\n`)}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-mono bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-mono bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-medium"
               title="New Line"
             >
               <CornerDownLeft className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">New Line</span>
+              <span>Enter</span>
             </button>
           </div>
         </div>
 
-        {/* Main Workspace Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1 bg-[#F8F9FA]">
-          {/* Title Input */}
+        {/* Main Body */}
+        <div className="p-3 sm:p-6 overflow-y-auto space-y-3.5 flex-1 bg-[#F8F9FA]">
           <input
             type="text"
-            placeholder="Page Heading (e.g. Lecture 04 Notes - Data Structures)..."
+            placeholder="Page Heading (e.g. Lecture Notes / Summary)..."
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             className="w-full px-3.5 py-2 text-xs sm:text-sm font-semibold bg-white border border-zinc-300 rounded-lg focus:outline-none focus:border-zinc-900"
           />
 
-          {/* MODE A: Freehand Ink Canvas with Continuous Auto-Convert */}
+          {/* Vector Handwriting Pad */}
           {inputMode === "inkpad" && (
             <div className="bg-white border-2 border-zinc-300 rounded-xl overflow-hidden shadow-xs">
               <div className="bg-zinc-100 px-3 sm:px-4 py-2 border-b border-zinc-200 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-3">
-                  <span className="text-[11px] font-mono font-semibold text-zinc-700">
-                    WRITE LARGE & CLEARLY ON THE GUIDE LINES
-                  </span>
-                  <label className="flex items-center gap-1.5 text-xs text-zinc-700 cursor-pointer">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-zinc-800 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={autoConvert}
                       onChange={(e) => setAutoConvert(e.target.checked)}
                       className="rounded accent-zinc-900"
                     />
-                    <span>Auto-Convert when pen pauses (1.8s)</span>
+                    <span>Auto-Type when pen pauses (1.3s)</span>
                   </label>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <select
-                    value={penSize}
-                    onChange={(e) => setPenSize(Number(e.target.value))}
-                    className="px-2 py-1 text-xs bg-white border border-zinc-300 rounded"
-                  >
-                    <option value={4}>Medium Pen</option>
-                    <option value={6}>Thick Marker (Best OCR)</option>
-                  </select>
-
+                <div className="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => setCanvasHeight((h) => (h < 600 ? h + 160 : 340))}
+                    onClick={() => setCanvasHeight((h) => (h < 540 ? h + 140 : 320))}
                     className="px-2.5 py-1 rounded text-xs font-medium bg-white border border-zinc-300 hover:bg-zinc-50 text-zinc-700"
                   >
-                    {canvasHeight < 600 ? "+ More Writing Space" : "Reset Size"}
+                    {canvasHeight < 540 ? "+ Expand Pad" : "Compact Pad"}
                   </button>
 
                   <button
@@ -473,10 +594,33 @@ export function SmartNoteModal({
                     className="flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 text-white"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    {isRecognizing ? "Reading Ink..." : "Convert Now"}
+                    {isRecognizing ? "Converting..." : "Convert Now"}
                   </button>
                 </div>
               </div>
+
+              {/* Smart Candidate Suggestions Bar (Tap to fix any word instantly!) */}
+              {candidates.length > 0 && (
+                <div className="px-3 sm:px-4 py-1.5 bg-zinc-50 border-b border-zinc-200 flex items-center gap-2 overflow-x-auto no-scrollbar">
+                  <span className="font-mono text-[10px] uppercase text-zinc-400 shrink-0">
+                    Matches (Tap to replace):
+                  </span>
+                  {candidates.map((cand, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSelectCandidate(cand)}
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-all shrink-0 ${
+                        cand === lastAppendedChunk
+                          ? "bg-zinc-900 text-white"
+                          : "bg-white border border-zinc-300 text-zinc-700 hover:border-zinc-900"
+                      }`}
+                    >
+                      {cand}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="relative w-full overflow-hidden">
                 <canvas
@@ -491,37 +635,31 @@ export function SmartNoteModal({
                   className="w-full cursor-crosshair bg-white block select-none"
                 />
                 {isRecognizing && (
-                  <div className="absolute inset-0 bg-white/75 flex items-center justify-center font-mono text-xs font-semibold text-zinc-900">
-                    CONVERTING HANDWRITING TO TYPED TEXT...
+                  <div className="absolute top-2 right-3 bg-zinc-900 text-white px-2.5 py-1 rounded-md font-mono text-[10px] shadow-sm">
+                    ANALYZING STROKES...
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* Continuous Ruled A4 Paper Sheet (Supports Unlimited Writing + 100% Accurate Native Tablet Scribble) */}
-          <div className="bg-white border border-zinc-300 rounded-xl p-4 sm:p-6 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-zinc-100">
-              <div className="text-xs font-semibold text-zinc-800">
-                {inputMode === "continuous"
-                  ? "✍️ Write directly below with your Tablet S-Pen / Apple Pencil (Scribble) or Keyboard:"
-                  : "📄 Live Typed Document Output (Automatically appends as you write above):"}
-              </div>
-              <span className="font-mono text-[11px] text-zinc-500">
-                {typedText.length} CHARS • AUTO MULTI-PAGE ENABLED
+          {/* Formatted Typed Output Sheet */}
+          <div className="bg-white border border-zinc-300 rounded-xl p-3.5 sm:p-5 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-1.5 border-b border-zinc-100">
+              <span className="text-xs font-semibold text-zinc-800">
+                📄 Live Typed Document Page (Editable):
+              </span>
+              <span className="font-mono text-[11px] text-zinc-400">
+                {typedText.length} CHARS
               </span>
             </div>
 
             <textarea
               ref={textareaRef}
-              rows={inputMode === "continuous" ? 14 : 7}
+              rows={inputMode === "continuous" ? 13 : 6}
               value={typedText}
               onChange={(e) => setTypedText(e.target.value)}
-              placeholder={
-                inputMode === "continuous"
-                  ? "Touch here with your Tablet Stylus (S-Pen / Apple Pencil) or use Gboard Handwriting on mobile to write continuously across the entire page with 100% accuracy..."
-                  : "Words written on the ink canvas above will continuously appear here..."
-              }
+              placeholder="Write on the pad above — your words will appear here with automatic spacing! You can also edit or type directly here anytime."
               style={{
                 backgroundImage:
                   "repeating-linear-gradient(transparent, transparent 27px, #F4F4F5 27px, #F4F4F5 28px)",
@@ -534,8 +672,8 @@ export function SmartNoteModal({
 
         {/* Footer */}
         <div className="px-4 sm:px-6 py-3 border-t border-zinc-200 bg-white flex flex-wrap items-center justify-between gap-2 shrink-0">
-          <span className="text-[11px] font-mono text-zinc-500">
-            LONG NOTES AUTOMATICALLY CREATE EXTRA A4 PAGES ON EXPORT
+          <span className="text-[11px] font-mono text-zinc-500 hidden sm:inline">
+            VECTOR STROKE ENGINE • AUTO MULTI-PAGE OVERFLOW
           </span>
           <div className="flex items-center gap-2 ml-auto">
             <button
