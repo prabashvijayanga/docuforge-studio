@@ -3,7 +3,8 @@ export type ToolMode =
   | "img2pdf"
   | "merge"
   | "compress"
-  | "convert";
+  | "convert"
+  | "study";
 
 export type ConvertDirection = "pdf_to_other" | "other_to_pdf";
 
@@ -37,4 +38,24 @@ export interface InspectorSettings {
   convertDirection: ConvertDirection;
   convertFormat: ConvertTargetFormat;
   imageDpi: number;
+}
+
+export interface StudyQuizQuestion {
+  id: number;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+  sourcePage: number;
+}
+
+export interface StudyPackResponse {
+  documentTitle: string;
+  pageCount: number;
+  wordCount: number;
+  readingTimeMinutes: number;
+  keyTopics: string[];
+  definitions: { term: string; meaning: string; page: number }[];
+  sections: { heading: string; bullets: string[]; page: number }[];
+  quiz: StudyQuizQuestion[];
 }

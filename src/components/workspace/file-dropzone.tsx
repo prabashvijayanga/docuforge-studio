@@ -1,6 +1,6 @@
 "use client";
 import React, { useRef, useState } from "react";
-import { Upload, FileUp, ArrowRightLeft } from "lucide-react";
+import { Upload, FileUp, ArrowRightLeft, GraduationCap } from "lucide-react";
 import { ConvertDirection, ToolMode } from "@/types/document";
 
 interface FileDropzoneProps {
@@ -25,6 +25,8 @@ export function FileDropzone({
   const acceptMime =
     mode === "img2pdf"
       ? "image/jpeg,image/png,image/webp"
+      : mode === "study"
+      ? ".pdf,.pptx,.docx,.txt,.md"
       : isReverseConvert
       ? ".docx,.doc,.pptx,.ppt,.xlsx,.xls,.md,.html,.htm,.txt,.csv"
       : "application/pdf";
@@ -94,7 +96,13 @@ export function FileDropzone({
         />
 
         <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-lg bg-zinc-100 border border-zinc-200 flex items-center justify-center mx-auto mb-4 text-zinc-700">
-          {isMulti ? <FileUp className="w-5 h-5" /> : <Upload className="w-5 h-5" />}
+          {mode === "study" ? (
+            <GraduationCap className="w-5 h-5" />
+          ) : isMulti ? (
+            <FileUp className="w-5 h-5" />
+          ) : (
+            <Upload className="w-5 h-5" />
+          )}
         </div>
 
         <h2 className="text-sm sm:text-base font-semibold text-zinc-900 tracking-tight mb-1">
@@ -102,6 +110,8 @@ export function FileDropzone({
             ? "Drop images here to compile into PDF"
             : mode === "merge"
             ? "Select multiple PDF files to combine"
+            : mode === "study"
+            ? "Drop a Lecture PDF, PowerPoint (.PPTX), Word (.DOCX), or Note file to generate Short Notes & Quiz"
             : isReverseConvert
             ? "Drop Word (.DOCX), PowerPoint (.PPTX), Excel (.XLSX), MD, HTML, or TXT to convert into PDF"
             : "Drop a PDF document here to open studio"}
@@ -111,7 +121,14 @@ export function FileDropzone({
         </p>
 
         <span className="inline-flex items-center px-4 py-2 rounded-md text-xs font-medium bg-zinc-900 text-white">
-          Select {isMulti ? "Files" : isReverseConvert ? "Office / Text File" : "PDF Document"}
+          Select{" "}
+          {isMulti
+            ? "Files"
+            : mode === "study"
+            ? "Study Material"
+            : isReverseConvert
+            ? "Office / Text File"
+            : "PDF Document"}
         </span>
 
         <div className="mt-6 sm:mt-8 pt-4 border-t border-zinc-100 flex flex-wrap items-center justify-center gap-2 sm:gap-6 font-mono text-[10px] sm:text-[11px] text-zinc-400">
@@ -119,6 +136,8 @@ export function FileDropzone({
             FORMAT:{" "}
             {mode === "img2pdf"
               ? "JPG / PNG / WEBP"
+              : mode === "study"
+              ? "PDF / PPTX / DOCX / MD / TXT"
               : isReverseConvert
               ? "DOCX / PPTX / XLSX / MD / HTML / TXT"
               : "PDF 1.4 - 2.0"}

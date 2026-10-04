@@ -37,6 +37,17 @@ export function LandingHero({ engineOnline, onLaunchTool }: LandingHeroProps) {
       formats: ["REORDER", "RANGE SPLIT", "SMART INK NOTES", "WATERMARK"],
       actionLabel: "Open Page Studio",
     },
+
+    {
+      id: "study" as ToolMode,
+      badge: "STUDENT FAVORITE",
+      title: "Short Notes & Quiz Generator",
+      desc: "Upload any lecture PDF, PowerPoint (.PPTX), or Word handout to automatically generate a structured revision Short Note and an interactive MCQ Practice Quiz.",
+      icon: <Sparkles className="w-5 h-5" />,
+      formats: ["SHORT NOTES", "AUTO MCQ QUIZ", "DEFINITIONS", "PDF EXPORT"],
+      actionLabel: "Generate Study Pack",
+    },
+    
     {
       id: "convert" as ToolMode,
       convertDir: "pdf_to_other" as ConvertDirection,

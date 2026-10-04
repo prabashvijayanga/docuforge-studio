@@ -23,6 +23,7 @@ from api.services.pdf_service import (
     md_to_pdf_stream,
     html_to_pdf_stream,
     txt_to_pdf_stream,
+    generate_study_pack_json,
 )
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -328,3 +329,26 @@ async def office_to_pdf_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Office-to-PDF error ({fname}): {e}")
         raise HTTPException(status_code=500, detail=f"Failed to convert {fname} to PDF: {str(e)}")
+    
+    
+    
+@app.post("/api/py/study-pack")
+async def study_pack_endpoint(
+    file: UploadFile = File(...),
+    question_count: int = Form(10),
+):
+    data = await file.read(MAX_FILE_SIZE_BYTES + 1)
+    if len(data) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 50MB security limit.")
+
+    fname = file.filename or "document.pdf"
+    try:
+        safe_q_count = max(5, min(question_count, 25))
+        result = generate_study_pack_json(data, fname, question_count=safe_q_count)
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Study Pack error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate Short Notes & Quiz from document.")    
+    

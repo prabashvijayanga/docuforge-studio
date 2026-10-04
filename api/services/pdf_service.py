@@ -17,6 +17,9 @@ import html
 import re
 import base64
 from typing import List, Tuple
+import math
+import random
+from collections import Counter
 
 
 def process_organize_pdf(
@@ -847,3 +850,284 @@ def txt_to_pdf_stream(txt_bytes: bytes) -> io.BytesIO:
             html_lines.append(f"<p>{html.escape(line)}</p>")
     html_lines.append("</body></html>")
     return render_html_story_to_pdf("\n".join(html_lines))
+
+# ==============================================================================
+# STUDY LAB ENGINE: AUTOMATIC SHORT NOTES & INTERACTIVE QUIZ GENERATOR
+# Supports .PDF, .PPTX, .DOCX, .MD, .TXT (100% Free Built-In NLP Engine)
+# ==============================================================================
+
+_STOPWORDS = {
+    "the", "and", "for", "that", "this", "with", "from", "are", "was", "were",
+    "have", "has", "had", "not", "but", "what", "all", "can", "when", "there",
+    "use", "each", "which", "she", "how", "their", "will", "other", "about",
+    "out", "many", "then", "them", "these", "some", "her", "would", "make",
+    "like", "him", "into", "time", "look", "two", "more", "write", "see",
+    "number", "way", "could", "people", "than", "first", "water", "been",
+    "call", "who", "oil", "its", "now", "find", "long", "down", "day", "did",
+    "get", "come", "made", "may", "part", "over", "new", "sound", "take",
+    "only", "little", "work", "know", "place", "year", "live", "back", "give",
+    "most", "very", "after", "thing", "our", "just", "name", "good", "sentence",
+    "man", "think", "say", "great", "where", "help", "through", "much", "before",
+    "line", "right", "too", "mean", "old", "any", "same", "tell", "boy", "follow",
+    "came", "want", "show", "also", "around", "form", "three", "small", "set",
+    "put", "end", "does", "another", "well", "large", "must", "big", "even",
+    "such", "because", "turn", "here", "why", "ask", "went", "men", "read",
+    "need", "land", "different", "home", "move", "try", "kind", "hand", "picture",
+    "again", "change", "off", "play", "spell", "air", "away", "animal", "house",
+    "point", "page", "letter", "mother", "answer", "found", "study", "still",
+}
+
+
+def _extract_pages_from_any_document(file_bytes: bytes, filename: str) -> List[Tuple[int, str, str]]:
+    """Returns list of (page_num, page_heading, page_text) from PDF, PPTX, DOCX, or TXT."""
+    fname = filename.lower()
+    pages_data: List[Tuple[int, str, str]] = []
+
+    if fname.endswith(".pdf") or file_bytes.startswith(b"%PDF-"):
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for idx, page in enumerate(doc):
+            txt = page.get_text("text").strip()
+            if not txt:
+                continue
+            lines = [ln.strip() for ln in txt.splitlines() if ln.strip()]
+            heading = lines[0][:75] if lines else f"Section {idx + 1}"
+            pages_data.append((idx + 1, heading, txt))
+        doc.close()
+
+    elif fname.endswith(".pptx"):
+        prs = Presentation(io.BytesIO(file_bytes))
+        for idx, slide in enumerate(prs.slides):
+            chunks = []
+            heading = f"Slide {idx + 1}"
+            try:
+                if slide.shapes.title and slide.shapes.title.text.strip():
+                    heading = slide.shapes.title.text.strip()[:75]
+            except Exception:
+                pass
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False):
+                    t = shape.text_frame.text.strip()
+                    if t:
+                        chunks.append(t)
+            full_txt = "\n".join(chunks).strip()
+            if full_txt:
+                pages_data.append((idx + 1, heading, full_txt))
+
+    elif fname.endswith(".docx"):
+        doc = docx.Document(io.BytesIO(file_bytes))
+        current_heading = "Document Overview"
+        current_Paras: List[str] = []
+        sec_idx = 1
+        for p in doc.paragraphs:
+            t = p.text.strip()
+            if not t:
+                continue
+            style_name = (p.style.name or "").lower() if p.style else ""
+            if "heading" in style_name or (len(t) < 65 and t.isupper()):
+                if current_Paras:
+                    pages_data.append((sec_idx, current_heading, "\n".join(current_Paras)))
+                    sec_idx += 1
+                    current_Paras = []
+                current_heading = t[:75]
+            else:
+                current_Paras.append(t)
+        if current_Paras:
+            pages_data.append((sec_idx, current_heading, "\n".join(current_Paras)))
+
+    else:
+        raw_txt = file_bytes.decode("utf-8", errors="replace")
+        chunks = [ raw_txt[i:i + 2200] for i in range(0, len(raw_txt), 2200) ]
+        for idx, ch in enumerate(chunks):
+            if ch.strip():
+                pages_data.append((idx + 1, f"Part {idx + 1}", ch.strip()))
+
+    return pages_data
+
+
+def generate_study_pack_json(file_bytes: bytes, filename: str, question_count: int = 10) -> dict:
+    pages_data = _extract_pages_from_any_document(file_bytes, filename)
+    if not pages_data:
+        raise ValueError("Could not extract readable text from this document. Ensure it is not a scanned image-only file.")
+
+    full_text = "\n".join(p[2] for p in pages_data)
+    all_words = re.findall(r"\b[A-Za-z][A-Za-z0-9\-]{2,}\b", full_text)
+    total_word_count = len(all_words)
+    reading_time = max(1, round(total_word_count / 200))
+
+    # 1. Compute TF Word Frequencies for Key Topic & Sentence Importance Scoring
+    filtered_words = [w.lower() for w in all_words if w.lower() not in _STOPWORDS and len(w) >= 4]
+    word_freq = Counter(filtered_words)
+
+    # Extract Top Key Topics (Properly capitalized display terms)
+    capital_map = {}
+    for w in all_words:
+        lw = w.lower()
+        if lw not in capital_map or (w[0].isupper() and not capital_map[lw][0].isupper()):
+            capital_map[lw] = w
+
+    key_topics = [
+        capital_map.get(w, w.capitalize())
+        for w, _ in word_freq.most_common(12)
+    ]
+
+    # 2. Extract Definitions, Laws, Formulas & Key Sentences across pages
+    definitions = []
+    sections = []
+    candidate_quiz_Pool = []
+
+    def_patterns = re.compile(
+        r"^([A-Z][A-Za-z0-9\s\-\(\)]{2,42}?)\s*(?::|-|–|is defined as|refers to|states that|means|is the)\s+(.{25,220})$"
+    )
+
+    for page_num, heading, page_txt in pages_data:
+        raw_lines = [re.sub(r"\s+", " ", ln).strip() for ln in page_txt.splitlines() if ln.strip()]
+        # Also split long paragraphs into sentences
+        sentences = []
+        for ln in raw_lines:
+            clean_ln = re.sub(r"^[•\-\*\d\.\)\s]+", "", ln).strip()
+            if not clean_ln:
+                continue
+            # Check if line is a definition or formula
+            m = def_patterns.match(clean_ln)
+            if m and len(definitions) < 12:
+                term = m.group(1).strip()
+                meaning = m.group(2).strip()
+                if len(term.split()) <= 5 and term.lower() not in _STOPWORDS:
+                    definitions.append({"term": term, "meaning": meaning, "page": page_num})
+
+            for s in re.split(r"(?<=[.!?])\s+", clean_ln):
+                s_clean = s.strip()
+                if 35 <= len(s_clean) <= 240:
+                    sentences.append(s_clean)
+
+        # Score sentences on this page by TF weight + signal cues
+        scored_sents = []
+        for s in sentences:
+            s_words = re.findall(r"\b[a-z]{4,}\b", s.lower())
+            if len(s_words) < 5:
+                continue
+            score = sum(word_freq.get(w, 0) for w in s_words) / math.sqrt(len(s_words) + 1)
+            if any(cue in s.lower() for cue in ("important", "law", "principle", "because", "therefore", "defined", "formula", "equation", "must", "results in", "increases", "decreases")):
+                score *= 1.45
+            scored_sents.append((score, s))
+            candidate_quiz_Pool.append((score, s, page_num, heading))
+
+        scored_sents.sort(key=lambda x: x[0], reverse=True)
+        top_bullets = []
+        seen_b = set()
+        for _, s in scored_sents:
+            norm = s.lower()[:50]
+            if norm not in seen_b:
+                seen_b.add(norm)
+                top_bullets.append(s)
+            if len(top_bullets) >= 4:
+                break
+
+        if top_bullets:
+            sections.append({
+                "heading": heading if len(heading) > 2 else f"Page {page_num} Summary",
+                "bullets": top_bullets,
+                "page": page_num,
+            })
+
+    # 3. Generate Smart Multiple-Choice Quiz Questions (MCQs)
+    quiz_questions = []
+    used_targets = set()
+
+    # Pool of distractor terms from top document vocabulary
+    vocab_pool = [capital_map.get(w, w) for w, _ in word_freq.most_common(50) if len(w) >= 4]
+    if len(vocab_pool) < 10:
+        vocab_pool.extend([" Equilibrium", " Proportionality", " Conservation", " Entropy", " Velocity", " Parameter"])
+
+    # A. First create Definition/Concept Questions
+    for d in definitions:
+        if len(quiz_questions) >= question_count:
+            break
+        target_term = d["term"]
+        if target_term.lower() in used_targets:
+            continue
+        used_targets.add(target_term.lower())
+
+        distractors = [
+            v for v in vocab_pool
+            if v.lower() != target_term.lower() and v.lower() not in target_term.lower()
+        ]
+        random.shuffle(distractors)
+        opts = [target_term] + distractors[:3]
+        while len(opts) < 4:
+            opts.append(f"None of the above ({len(opts)})")
+        random.shuffle(opts)
+
+        quiz_questions.append({
+            "id": len(quiz_questions) + 1,
+            "question": f'Which concept or term best matches the following statement?\n"{d["meaning"]}"',
+            "options": opts,
+            "correctIndex": opts.index(target_term),
+            "explanation": f'On Page {d["page"]}, "{target_term}" is defined as: {d["meaning"]}',
+            "sourcePage": d["page"],
+        })
+
+    # B. Contextual Cloze / Key-Concept MCQs from Highest-Scoring Facts
+    candidate_quiz_Pool.sort(key=lambda x: x[0], reverse=True)
+    for _, sent, p_num, _ in candidate_quiz_Pool:
+        if len(quiz_questions) >= question_count:
+            break
+
+        # Find an important keyword inside this sentence to test the student on
+        words_in_sent = re.findall(r"\b[A-Za-z][A-Za-z\-]{4,}\b", sent)
+        ranked_keywords = sorted(
+            [w for w in words_in_sent if w.lower() not in _STOPWORDS],
+            key=lambda w: word_freq.get(w.lower(), 0),
+            reverse=True,
+        )
+        if not ranked_keywords:
+            continue
+
+        chosen_word = None
+        for kw in ranked_keywords:
+            if kw.lower() not in used_targets:
+                chosen_word = kw
+                break
+        if not chosen_word:
+            continue
+
+        used_targets.add(chosen_word.lower())
+        blanked_sentence = re.sub(
+            rf"\b{re.escape(chosen_word)}\b",
+            "________",
+            sent,
+            count=1,
+        )
+        if "________" not in blanked_sentence:
+            continue
+
+        distractors = [
+            v for v in vocab_pool
+            if v.lower() != chosen_word.lower() and len(v) >= 4
+        ]
+        random.shuffle(distractors)
+        opts = [chosen_word] + distractors[:3]
+        while len(opts) < 4:
+            opts.append("Constant factor")
+        random.shuffle(opts)
+
+        quiz_questions.append({
+            "id": len(quiz_questions) + 1,
+            "question": f"Complete the following key statement from Page {p_num}:\n\"{blanked_sentence}\"",
+            "options": opts,
+            "correctIndex": opts.index(chosen_word),
+            "explanation": f'Full original statement (Page {p_num}): "{sent}"',
+            "sourcePage": p_num,
+        })
+
+    clean_title = os.path.splitext(filename)[0].replace("_", " ").replace("-", " ").title()
+    return {
+        "documentTitle": clean_title,
+        "pageCount": len(pages_data),
+        "wordCount": total_word_count,
+        "readingTimeMinutes": reading_time,
+        "keyTopics": key_topics[:10],
+        "definitions": definitions[:10],
+        "sections": sections[:15],
+        "quiz": quiz_questions,
+    }

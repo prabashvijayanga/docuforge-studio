@@ -7,6 +7,7 @@ import {
   ConvertTargetFormat,
   InspectorSettings,
   PDFPageItem,
+  StudyPackResponse,
   ToolMode,
 } from "@/types/document";
 import { renderPdfPagesToThumbnails } from "@/lib/pdf-client-renderer";
@@ -15,6 +16,7 @@ import { LandingHero } from "@/components/layout/landing-hero";
 import { FileDropzone } from "@/components/workspace/file-dropzone";
 import { PageThumbnailGrid } from "@/components/workspace/page-thumbnail-grid";
 import { SmartNoteModal } from "@/components/workspace/smart-note-modal";
+import { StudyPackView } from "@/components/workspace/study-pack-view";
 import { InspectorSidebar } from "@/components/layout/inspector-sidebar";
 import { formatBytes } from "@/lib/utils";
 import { FileText, Trash2, Scissors, ArrowLeft } from "lucide-react";
@@ -113,6 +115,7 @@ export default function DocuForgeStudioPage() {
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [rangeInput, setRangeInput] = useState("");
+  const [studyPackData, setStudyPackData] = useState<StudyPackResponse | null>(null);
 
   const [noteModalOpen, setNoteModalOpen] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState<number>(0);
@@ -139,6 +142,7 @@ export default function DocuForgeStudioPage() {
     setPages([]);
     setDeletedHistory([]);
     setRangeInput("");
+    setStudyPackData(null);
   };
 
   const handleSelectTool = (tool: ToolMode) => {
@@ -175,6 +179,30 @@ export default function DocuForgeStudioPage() {
         alert("Failed to render PDF preview. Ensure the PDF is valid and not password-protected.");
       } finally {
         setLoadingThumbnails(false);
+      }
+    } else if (activeTool === "study" && selected[0]) {
+      // Automatically generate Short Notes & Quiz as soon as a student drops a file!
+      setIsProcessing(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", selected[0]);
+        formData.append("question_count", "10");
+        const res = await fetch(`${API_BASE}/api/py/study-pack`, {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        const json: StudyPackResponse = await res.json();
+        setStudyPackData(json);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to analyze document";
+        alert(`Study Pack generation failed: ${msg}`);
+        setFiles([]);
+      } finally {
+        setIsProcessing(false);
       }
     }
   };
@@ -536,11 +564,12 @@ export default function DocuForgeStudioPage() {
 
       {showLanding ? (
         <LandingHero engineOnline={engineOnline} onLaunchTool={handleLaunchFromLanding} />
+      ) : activeTool === "study" && studyPackData ? (
+        <StudyPackView data={studyPackData} onReset={handleReset} />
       ) : (
         <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
           {files.length === 0 ? (
             <div className="flex-1 flex flex-col">
-              {/* Sub-bar to return to All Tools Overview */}
               <div className="px-4 sm:px-8 pt-4 flex items-center justify-between">
                 <button
                   type="button"
@@ -561,6 +590,11 @@ export default function DocuForgeStudioPage() {
                 }}
                 onFilesSelected={handleFilesSelected}
               />
+            </div>
+          ) : activeTool === "study" && isProcessing ? (
+            <div className="flex-1 py-20 flex flex-col items-center justify-center gap-2 font-mono text-xs text-zinc-600">
+              <div className="w-6 h-6 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin" />
+              <span>ANALYZING DOCUMENT & GENERATING SHORT NOTES + QUIZ...</span>
             </div>
           ) : activeTool === "organize" ? (
             loadingThumbnails ? (
@@ -646,16 +680,18 @@ export default function DocuForgeStudioPage() {
             </div>
           )}
 
-          <InspectorSidebar
-            mode={activeTool}
-            files={files}
-            pageCount={pages.length}
-            settings={settings}
-            onUpdateSettings={(partial) => setSettings((prev) => ({ ...prev, ...partial }))}
-            onExport={handleExport}
-            isProcessing={isProcessing}
-            onResetFiles={handleReset}
-          />
+          {activeTool !== "study" && (
+            <InspectorSidebar
+              mode={activeTool}
+              files={files}
+              pageCount={pages.length}
+              settings={settings}
+              onUpdateSettings={(partial) => setSettings((prev) => ({ ...prev, ...partial }))}
+              onExport={handleExport}
+              isProcessing={isProcessing}
+              onResetFiles={handleReset}
+            />
+          )}
         </div>
       )}
 

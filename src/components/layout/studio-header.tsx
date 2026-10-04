@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Download,
   LayoutGrid,
+  GraduationCap,
 } from "lucide-react";
 
 interface StudioHeaderProps {
@@ -26,6 +27,7 @@ interface StudioHeaderProps {
 
 const TOOLS: { id: ToolMode; label: string; icon: React.ReactNode }[] = [
   { id: "organize", label: "Organize & Notes", icon: <FileText className="w-3.5 h-3.5 shrink-0" /> },
+  { id: "study", label: "Short Note & Quiz", icon: <GraduationCap className="w-3.5 h-3.5 shrink-0" /> },
   { id: "img2pdf", label: "Images to PDF", icon: <Image className="w-3.5 h-3.5 shrink-0" /> },
   { id: "merge", label: "Merge PDFs", icon: <Layers className="w-3.5 h-3.5 shrink-0" /> },
   { id: "compress", label: "Compress", icon: <Minimize2 className="w-3.5 h-3.5 shrink-0" /> },
@@ -126,16 +128,18 @@ export function StudioHeader({
           )}
 
           {!showLanding ? (
-            <button
-              type="button"
-              onClick={onExport}
-              disabled={!hasFiles || isProcessing}
-              className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 text-white font-medium text-xs rounded-md px-3 sm:px-4 py-2 transition-colors whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5 shrink-0" />
-              <span>{isProcessing ? "Processing..." : "Export"}</span>
-              <span className="hidden sm:inline">{!isProcessing && "Document"}</span>
-            </button>
+            activeTool !== "study" && (
+              <button
+                type="button"
+                onClick={onExport}
+                disabled={!hasFiles || isProcessing}
+                className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-300 text-white font-medium text-xs rounded-md px-3 sm:px-4 py-2 transition-colors whitespace-nowrap"
+              >
+                <Download className="w-3.5 h-3.5 shrink-0" />
+                <span>{isProcessing ? "Processing..." : "Export"}</span>
+                <span className="hidden sm:inline">{!isProcessing && "Document"}</span>
+              </button>
+            )
           ) : (
             <button
               type="button"
