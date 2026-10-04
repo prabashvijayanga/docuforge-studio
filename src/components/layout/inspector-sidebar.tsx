@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { InspectorSettings, ToolMode } from "@/types/document";
+import { ConvertTargetFormat, InspectorSettings, ToolMode } from "@/types/document";
 import { formatBytes } from "@/lib/utils";
 
 interface InspectorSidebarProps {
@@ -12,6 +12,56 @@ interface InspectorSidebarProps {
   onExport: () => void;
   isProcessing: boolean;
 }
+
+const CONVERT_OPTIONS: {
+  id: ConvertTargetFormat;
+  badge: string;
+  title: string;
+  desc: string;
+}[] = [
+  {
+    id: "docx",
+    badge: ".DOCX",
+    title: "Microsoft Word",
+    desc: "Editable paragraphs & layout",
+  },
+  {
+    id: "pptx",
+    badge: ".PPTX",
+    title: "PowerPoint Slides",
+    desc: "16:9 widescreen presentation + notes",
+  },
+  {
+    id: "xlsx",
+    badge: ".XLSX",
+    title: "Excel Spreadsheet",
+    desc: "Auto-detects tables & structured rows",
+  },
+  {
+    id: "md",
+    badge: ".MD",
+    title: "Markdown Document",
+    desc: "Clean headings & text for Notion/GitHub",
+  },
+  {
+    id: "html",
+    badge: ".HTML",
+    title: "Interactive Web Page",
+    desc: "Standalone responsive HTML5 document",
+  },
+  {
+    id: "txt",
+    badge: ".TXT",
+    title: "Plain Text Stream",
+    desc: "Raw UTF-8 text with page markers",
+  },
+  {
+    id: "png_zip",
+    badge: ".ZIP",
+    title: "High-Res PNG Archive",
+    desc: "150 DPI rendered page sheets",
+  },
+];
 
 export function InspectorSidebar({
   mode,
@@ -25,7 +75,7 @@ export function InspectorSidebar({
   const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
   return (
-    <aside className="w-full lg:w-80 bg-white border-t lg:border-t-0 lg:border-l border-zinc-200 p-4 sm:p-5 flex flex-col justify-between shrink-0">
+    <aside className="w-full lg:w-80 bg-white border-t lg:border-t-0 lg:border-l border-zinc-200 p-4 sm:p-5 flex flex-col justify-between shrink-0 overflow-y-auto">
       <div className="space-y-5">
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2.5">
@@ -49,7 +99,6 @@ export function InspectorSidebar({
           </div>
         </div>
 
-        {/* Tool-specific Inspector Controls */}
         {mode === "organize" && (
           <div className="space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
@@ -68,7 +117,7 @@ export function InspectorSidebar({
               />
             </div>
             <p className="text-[11px] text-zinc-500 leading-relaxed">
-              Drag cards to reorder pages, tap rotate on individual sheets, or remove unwanted pages before exporting.
+              Drag cards to reorder pages, insert Smart Typed Note pages anywhere, or remove unwanted sheets.
             </p>
           </div>
         )}
@@ -139,35 +188,42 @@ export function InspectorSidebar({
         )}
 
         {mode === "convert" && (
-          <div className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              Target Output Format
-            </h3>
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Target Output Format (7 Engines)
+              </h3>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
-              <button
-                type="button"
-                onClick={() => onUpdateSettings({ convertFormat: "docx" })}
-                className={`p-3 rounded-lg border text-left text-xs ${
-                  settings.convertFormat === "docx"
-                    ? "border-zinc-900 bg-zinc-50 font-medium"
-                    : "border-zinc-200"
-                }`}
-              >
-                <div className="font-mono text-zinc-900">Microsoft Word (.DOCX)</div>
-                <div className="text-[11px] text-zinc-500">Editable layout & paragraphs</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => onUpdateSettings({ convertFormat: "png_zip" })}
-                className={`p-3 rounded-lg border text-left text-xs ${
-                  settings.convertFormat === "png_zip"
-                    ? "border-zinc-900 bg-zinc-50 font-medium"
-                    : "border-zinc-200"
-                }`}
-              >
-                <div className="font-mono text-zinc-900">High-Res PNG Archive (.ZIP)</div>
-                <div className="text-[11px] text-zinc-500">150 DPI rendered sheets</div>
-              </button>
+              {CONVERT_OPTIONS.map((opt) => {
+                const active = settings.convertFormat === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onUpdateSettings({ convertFormat: opt.id })}
+                    className={`p-2.5 rounded-lg border text-left text-xs transition-all ${
+                      active
+                        ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900/10"
+                        : "border-zinc-200 hover:border-zinc-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="font-semibold text-zinc-900">{opt.title}</span>
+                      <span
+                        className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                          active
+                            ? "bg-zinc-900 text-white"
+                            : "bg-zinc-100 text-zinc-600"
+                        }`}
+                      >
+                        {opt.badge}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-zinc-500">{opt.desc}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -180,7 +236,7 @@ export function InspectorSidebar({
           disabled={files.length === 0 || isProcessing}
           className="w-full py-2.5 px-4 rounded-md bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-200 disabled:text-zinc-400 text-white font-medium text-xs transition-colors"
         >
-          {isProcessing ? "Running Python Pipeline..." : "Execute & Download"}
+          {isProcessing ? "Running Conversion Engine..." : "Execute & Download"}
         </button>
       </div>
     </aside>

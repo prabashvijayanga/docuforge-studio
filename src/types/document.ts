@@ -5,9 +5,18 @@ export type ToolMode =
   | "compress"
   | "convert";
 
+export type ConvertTargetFormat =
+  | "docx"
+  | "pptx"
+  | "xlsx"
+  | "png_zip"
+  | "html"
+  | "md"
+  | "txt";
+
 export interface PDFPageItem {
   id: string;
-  originalIndex: number; 
+  originalIndex: number;
   pageNumber: number;
   rotation: number;
   thumbnailDataUrl: string;
@@ -23,6 +32,6 @@ export interface InspectorSettings {
   compressLevel: "light" | "recommended" | "extreme";
   pageSize: "A4" | "FIT";
   pageMargin: number;
-  convertFormat: "docx" | "png_zip";
+  convertFormat: ConvertTargetFormat;
   imageDpi: number;
 }

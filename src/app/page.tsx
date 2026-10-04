@@ -73,7 +73,6 @@ async function imageFileToNormalizedJpegBytes(
   });
 }
 
-// Long paragraphs A4 
 function wrapTextLines(text: string, maxCharsPerLine = 78): string[] {
   const result: string[] = [];
   const paragraphs = text.split("\n");
@@ -107,7 +106,6 @@ export default function DocuForgeStudioPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [rangeInput, setRangeInput] = useState("");
 
-  // Smart Note Modal State
   const [noteModalOpen, setNoteModalOpen] = useState(false);
   const [insertAfterIdx, setInsertAfterIdx] = useState<number>(0);
   const [editingNotePageId, setEditingNotePageId] = useState<string | null>(null);
@@ -185,14 +183,12 @@ export default function DocuForgeStudioPage() {
     setDeletedHistory((prev) => prev.slice(0, -1));
   };
 
-  // Open Modal to insert a new Smart Typed Page after `index`
   const handleOpenInsertNote = (index: number) => {
     setEditingNotePageId(null);
     setInsertAfterIdx(index);
     setNoteModalOpen(true);
   };
 
-  // Open Modal to edit an existing Smart Typed Page
   const handleOpenEditNote = (page: PDFPageItem) => {
     setEditingNotePageId(page.id);
     setNoteModalOpen(true);
@@ -285,7 +281,7 @@ export default function DocuForgeStudioPage() {
     setIsProcessing(true);
 
     try {
-      // 1. ORGANIZE & SMART TYPED NOTES — Direct Client-Side PDF-Lib Engine (Supports 100+ pages + Custom Typed Note Sheets!)
+      // 1. ORGANIZE & SMART TYPED NOTES — Client-Side Engine
       if (activeTool === "organize") {
         const srcBytes = await files[0].arrayBuffer();
         const srcDoc = await PDFDocument.load(srcBytes);
@@ -298,7 +294,6 @@ export default function DocuForgeStudioPage() {
           let targetPage;
 
           if (p.isCustomNote) {
-            // Render Custom Smart Typed Note Page
             targetPage = outDoc.addPage([595.28, 841.89]);
             const { width, height } = targetPage.getSize();
             let cursorY = height - 56;
@@ -341,14 +336,12 @@ export default function DocuForgeStudioPage() {
               targetPage.setRotation(degrees(p.rotation));
             }
           } else {
-            // Copy original PDF page
             const [copied] = await outDoc.copyPages(srcDoc, [p.originalIndex]);
             const currentRot = copied.getRotation().angle;
             copied.setRotation(degrees((currentRot + p.rotation) % 360));
             targetPage = outDoc.addPage(copied);
           }
 
-          // Optional Diagonal Watermark
           if (settings.watermarkText.trim()) {
             const { width, height } = targetPage.getSize();
             targetPage.drawText(settings.watermarkText.trim(), {
@@ -371,7 +364,7 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 2. IMAGES TO PDF — Direct Browser Engine
+      // 2. IMAGES TO PDF — Client-Side Engine
       if (activeTool === "img2pdf") {
         const pdfDoc = await PDFDocument.create();
         const a4Width = 595.28;
@@ -411,7 +404,7 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 3. MERGE PDFs — Direct Browser Engine
+      // 3. MERGE PDFs — Client-Side Engine
       if (activeTool === "merge") {
         const mergedPdf = await PDFDocument.create();
         for (const pdfFile of files) {
@@ -428,10 +421,11 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 4. SERVER-SIDE PYTHON PIPELINES (Compress, Convert to Word/Images)
+      // 4. SERVER-SIDE PYTHON PIPELINES (Compress + 7 Multi-Format Converters)
       const formData = new FormData();
       let endpoint = "/api/py/compress";
-      let outputFilename = "docuforge_output.pdf";
+      const baseName = files[0].name.replace(/\.pdf$/i, "");
+      let outputFilename = `${baseName}_output.pdf`;
 
       if (activeTool === "compress") {
         formData.append("file", files[0]);
@@ -440,13 +434,37 @@ export default function DocuForgeStudioPage() {
         outputFilename = `compressed_${files[0].name}`;
       } else if (activeTool === "convert") {
         formData.append("file", files[0]);
-        if (settings.convertFormat === "docx") {
-          endpoint = "/api/py/pdf-to-word";
-          outputFilename = files[0].name.replace(/\.pdf$/i, ".docx");
-        } else {
-          formData.append("dpi", String(settings.imageDpi));
-          endpoint = "/api/py/pdf-to-images";
-          outputFilename = `${files[0].name.replace(/\.pdf$/i, "")}_images.zip`;
+        switch (settings.convertFormat) {
+          case "docx":
+            endpoint = "/api/py/pdf-to-word";
+            outputFilename = `${baseName}.docx`;
+            break;
+          case "pptx":
+            endpoint = "/api/py/pdf-to-pptx";
+            outputFilename = `${baseName}.pptx`;
+            break;
+          case "xlsx":
+            endpoint = "/api/py/pdf-to-excel";
+            outputFilename = `${baseName}.xlsx`;
+            break;
+          case "md":
+            endpoint = "/api/py/pdf-to-md";
+            outputFilename = `${baseName}.md`;
+            break;
+          case "html":
+            endpoint = "/api/py/pdf-to-html";
+            outputFilename = `${baseName}.html`;
+            break;
+          case "txt":
+            endpoint = "/api/py/pdf-to-txt";
+            outputFilename = `${baseName}.txt`;
+            break;
+          case "png_zip":
+          default:
+            formData.append("dpi", String(settings.imageDpi));
+            endpoint = "/api/py/pdf-to-images";
+            outputFilename = `${baseName}_images.zip`;
+            break;
         }
       }
 
@@ -583,7 +601,6 @@ export default function DocuForgeStudioPage() {
         />
       </div>
 
-      {/* Smart Handwriting-to-Typed Page Modal */}
       <SmartNoteModal
         isOpen={noteModalOpen}
         insertAfterPage={insertAfterIdx + 1}

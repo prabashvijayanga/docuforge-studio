@@ -1,11 +1,16 @@
 import fitz  # PyMuPDF
 from PIL import Image
 from pdf2docx import Converter
+from pptx import Presentation
+from pptx.util import Inches
+import openpyxl
+from openpyxl.styles import Font, PatternFill
 import io
 import zipfile
 import json
 import tempfile
 import os
+import html
 from typing import List, Tuple
 
 
@@ -30,7 +35,6 @@ def process_organize_pdf(
     if not valid_ops:
         raise ValueError("No valid pages selected for export.")
 
-    # C-speed native page selection & reordering
     selected_indices = [int(op["originalIndex"]) for op in valid_ops]
     doc.select(selected_indices)
 
@@ -41,7 +45,6 @@ def process_organize_pdf(
         if add_rot != 0:
             page.set_rotation((page.rotation + add_rot) % 360)
 
-        # Fixed 45-degree diagonal watermark using PyMuPDF Morph Matrix (No rotate=45 error!)
         if clean_wm:
             rect = page.rect
             center_point = fitz.Point(rect.width * 0.25, rect.height * 0.55)
@@ -182,3 +185,192 @@ def pdf_to_word_docx(pdf_bytes: bytes) -> io.BytesIO:
             os.remove(tmp_pdf_path)
         if os.path.exists(tmp_docx_path):
             os.remove(tmp_docx_path)
+
+
+# NEW CONVERTER 1: PDF to PowerPoint (.PPTX)
+def pdf_to_pptx_stream(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    prs = Presentation()
+    # Set Widescreen 16:9 (13.333 x 7.5 inches)
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    blank_layout = prs.slide_layouts[6]
+
+    for page in doc:
+        slide = prs.slides.add_slide(blank_layout)
+        pix = page.get_pixmap(dpi=dpi)
+        img_bytes = io.BytesIO(pix.tobytes("png"))
+
+        # Center page image inside slide while preserving aspect ratio
+        page_ratio = pix.width / pix.height
+        slide_w = prs.slide_width
+        slide_h = prs.slide_height
+        slide_ratio = slide_w / slide_h
+
+        if page_ratio > slide_ratio:
+            draw_w = slide_w
+            draw_h = int(slide_w / page_ratio)
+            left = 0
+            top = int((slide_h - draw_h) / 2)
+        else:
+            draw_h = slide_h
+            draw_w = int(slide_h * page_ratio)
+            top = 0
+            left = int((slide_w - draw_w) / 2)
+
+        slide.shapes.add_picture(img_bytes, left, top, width=draw_w, height=draw_h)
+
+        # Also attach extracted text into Speaker Notes for easy copy-pasting!
+        page_text = page.get_text("text").strip()
+        if page_text:
+            notes_slide = slide.notes_slide
+            notes_slide.notes_text_frame.text = page_text
+
+    doc.close()
+    output = io.BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
+
+# NEW CONVERTER 2: PDF to Excel (.XLSX) — Extracts Tables & Structured Text
+def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    wb = openpyxl.Workbook()
+    # Remove default sheet
+    wb.remove(wb.active)
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="18181B", end_color="18181B", fill_type="solid")
+
+    for idx, page in enumerate(doc):
+        ws = wb.create_sheet(title=f"Page_{idx + 1}")
+        row_cursor = 1
+
+        # 1. Try native table detection first
+        tables_found = False
+        try:
+            tabs = page.find_tables()
+            if tabs and tabs.tables:
+                tables_found = True
+                for t_idx, table in enumerate(tabs.tables):
+                    extracted = table.extract()
+                    for r_i, row in enumerate(extracted):
+                        cleaned_row = [cell if cell is not None else "" for cell in row]
+                        ws.append(cleaned_row)
+                        if r_i == 0:
+                            for col_i in range(1, len(cleaned_row) + 1):
+                                cell_obj = ws.cell(row=row_cursor, column=col_i)
+                                cell_obj.font = header_font
+                                cell_obj.fill = header_fill
+                        row_cursor += 1
+                    ws.append([])
+                    row_cursor += 1
+        except Exception:
+            tables_found = False
+
+        # 2. Fallback: Structured line/column extraction if no formal borders exist
+        if not tables_found:
+            ws.append([f"Page {idx + 1} Extracted Content"])
+            ws.cell(row=1, column=1).font = header_font
+            ws.cell(row=1, column=1).fill = header_fill
+            lines = page.get_text("text").splitlines()
+            for line in lines:
+                if line.strip():
+                    # Split by multiple spaces or tabs to mimic columns
+                    cols = [c.strip() for c in line.split("  ") if c.strip()]
+                    ws.append(cols if len(cols) > 1 else [line.strip()])
+
+    if len(wb.sheetnames) == 0:
+        wb.create_sheet(title="Empty_PDF")
+
+    doc.close()
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
+# NEW CONVERTER 3: PDF to Markdown (.MD)
+def pdf_to_markdown_md(pdf_bytes: bytes) -> io.BytesIO:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    md_parts = ["# Extracted Document\n"]
+
+    for idx, page in enumerate(doc):
+        md_parts.append(f"\n---\n## Page {idx + 1}\n")
+        blocks = page.get_text("dict").get("blocks", [])
+        for b in blocks:
+            if b.get("type") != 0:
+                continue
+            for line in b.get("lines", []):
+                spans = line.get("spans", [])
+                if not spans:
+                    continue
+                line_text = "".join(s.get("text", "") for s in spans).strip()
+                if not line_text:
+                    continue
+                max_size = max((s.get("size", 11) for s in spans), default=11)
+                if max_size >= 16:
+                    md_parts.append(f"### {line_text}\n")
+                else:
+                    md_parts.append(f"{line_text}\n")
+
+    doc.close()
+    output = io.BytesIO("\n".join(md_parts).encode("utf-8"))
+    output.seek(0)
+    return output
+
+
+# NEW CONVERTER 4: PDF to Standalone Responsive HTML5 (.HTML)
+def pdf_to_html_stream(pdf_bytes: bytes) -> io.BytesIO:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    html_pages = []
+
+    for idx, page in enumerate(doc):
+        raw_text = page.get_text("text").strip()
+        paragraphs = [
+            f"<p>{html.escape(p.strip())}</p>"
+            for p in raw_text.split("\n\n")
+            if p.strip()
+        ]
+        body_html = "\n".join(paragraphs) if paragraphs else "<p><em>(Visual / Image Page)</em></p>"
+        html_pages.append(
+            f'<section class="page"><div class="page-badge">PAGE {idx + 1}</div>{body_html}</section>'
+        )
+
+    doc.close()
+    full_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DocuForge HTML Export</title>
+<style>
+  body {{ font-family: system-ui, -apple-system, sans-serif; background: #F4F4F5; color: #18181B; margin: 0; padding: 32px 16px; line-height: 1.65; }}
+  .container {{ max-width: 820px; margin: 0 auto; }}
+  .page {{ background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 10px; padding: 36px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }}
+  .page-badge {{ font-family: monospace; font-size: 11px; color: #71717A; border-bottom: 1px solid #F4F4F5; padding-bottom: 8px; margin-bottom: 16px; }}
+  p {{ margin: 0 0 14px 0; white-space: pre-wrap; }}
+</style>
+</head>
+<body>
+  <div class="container">
+    {"".join(html_pages)}
+  </div>
+</body>
+</html>"""
+    output = io.BytesIO(full_html.encode("utf-8"))
+    output.seek(0)
+    return output
+
+
+# NEW CONVERTER 5: PDF to Plain Text (.TXT)
+def pdf_to_txt_stream(pdf_bytes: bytes) -> io.BytesIO:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    txt_chunks = []
+    for idx, page in enumerate(doc):
+        txt_chunks.append(f"=== PAGE {idx + 1} ===\n{page.get_text('text').strip()}\n")
+    doc.close()
+    output = io.BytesIO("\n".join(txt_chunks).encode("utf-8"))
+    output.seek(0)
+    return output

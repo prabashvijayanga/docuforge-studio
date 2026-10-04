@@ -12,27 +12,27 @@ from api.services.pdf_service import (
     compress_pdf_stream,
     pdf_to_images_zip,
     pdf_to_word_docx,
+    pdf_to_pptx_stream,
+    pdf_to_excel_xlsx,
+    pdf_to_markdown_md,
+    pdf_to_html_stream,
+    pdf_to_txt_stream,
 )
 
-# 1. Prevent Pillow Decompression Bomb attacks (Max ~25 Megapixels per image)
-Image.MAX_IMAGE_PIXELS = 25_000_000
-
-# 2. Security Constants
-MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB max per file
-MAX_FILES_COUNT = 20                    # Max 20 files per batch
+Image.MAX_IMAGE_PIXELS = 100_000_000
+MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB max
+MAX_FILES_COUNT = 30
 ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("docuforge-security")
 
-# Hide Swagger UI in production
 is_prod = os.getenv("NODE_ENV") == "production"
 app = FastAPI(
     docs_url=None if is_prod else "/api/py/docs",
     openapi_url=None if is_prod else "/api/py/openapi.json",
 )
 
-# 3. Strict CORS Configuration
 allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -51,7 +51,7 @@ app.add_middleware(
 async def read_and_validate_pdf(upload: UploadFile) -> bytes:
     data = await upload.read(MAX_FILE_SIZE_BYTES + 1)
     if len(data) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="File exceeds the 25MB security limit.")
+        raise HTTPException(status_code=413, detail="File exceeds the 50MB security limit.")
     if not data.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="Invalid PDF file signature.")
     return data
@@ -62,13 +62,13 @@ async def read_and_validate_image(upload: UploadFile) -> bytes:
         raise HTTPException(status_code=400, detail="Only JPG, PNG, and WebP images are allowed.")
     data = await upload.read(MAX_FILE_SIZE_BYTES + 1)
     if len(data) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="Image exceeds the 25MB security limit.")
+        raise HTTPException(status_code=413, detail="Image exceeds the 50MB security limit.")
     return data
 
 
 @app.get("/api/py/health")
 def health_check():
-    return {"status": "online", "engine": "PyMuPDF + Pillow Stateless Engine"}
+    return {"status": "online", "engine": "PyMuPDF + OpenXML Multi-Converter Engine"}
 
 
 @app.post("/api/py/organize")
@@ -80,7 +80,6 @@ async def organize_endpoint(
 ):
     try:
         pdf_bytes = await read_and_validate_pdf(file)
-        # Sanitize watermark length to max 60 chars
         safe_watermark = watermark[:60] if watermark else ""
         out = process_organize_pdf(pdf_bytes, operations, safe_watermark, compress_level)
         return StreamingResponse(
@@ -104,15 +103,11 @@ async def images_to_pdf_endpoint(
     margin: int = Form(24),
 ):
     if len(files) > MAX_FILES_COUNT:
-        raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES_COUNT} images allowed at once.")
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES_COUNT} images allowed.")
     try:
         safe_margin = max(0, min(margin, 100))
         safe_page_size = "FIT" if page_size == "FIT" else "A4"
-        items = []
-        for f in files:
-            img_bytes = await read_and_validate_image(f)
-            items.append((f.filename or "img", img_bytes))
-
+        items = [(f.filename or "img", await read_and_validate_image(f)) for f in files]
         out = convert_images_to_pdf(items, page_size=safe_page_size, margin=safe_margin)
         return StreamingResponse(
             out,
@@ -129,7 +124,7 @@ async def images_to_pdf_endpoint(
 @app.post("/api/py/merge")
 async def merge_endpoint(files: List[UploadFile] = File(...)):
     if len(files) > MAX_FILES_COUNT:
-        raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES_COUNT} PDFs allowed at once.")
+        raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES_COUNT} PDFs allowed.")
     try:
         raw_list = [await read_and_validate_pdf(f) for f in files]
         out = merge_multiple_pdfs(raw_list)
@@ -173,7 +168,6 @@ async def pdf_to_images_endpoint(
 ):
     try:
         pdf_bytes = await read_and_validate_pdf(file)
-        # Clamp DPI between 72 and 300 to prevent RAM exhaustion
         safe_dpi = max(72, min(dpi, 300))
         out = pdf_to_images_zip(pdf_bytes, dpi=safe_dpi)
         return StreamingResponse(
@@ -203,3 +197,88 @@ async def pdf_to_word_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"PDF-to-Word error: {e}")
         raise HTTPException(status_code=500, detail="Failed to convert PDF to Word document.")
+
+
+@app.post("/api/py/pdf-to-pptx")
+async def pdf_to_pptx_endpoint(file: UploadFile = File(...)):
+    try:
+        pdf_bytes = await read_and_validate_pdf(file)
+        out = pdf_to_pptx_stream(pdf_bytes, dpi=150)
+        return StreamingResponse(
+            out,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": "attachment; filename=presentation.pptx"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF-to-PPTX error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to convert PDF to PowerPoint.")
+
+
+@app.post("/api/py/pdf-to-excel")
+async def pdf_to_excel_endpoint(file: UploadFile = File(...)):
+    try:
+        pdf_bytes = await read_and_validate_pdf(file)
+        out = pdf_to_excel_xlsx(pdf_bytes)
+        return StreamingResponse(
+            out,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=extracted_tables.xlsx"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF-to-Excel error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to convert PDF to Excel spreadsheet.")
+
+
+@app.post("/api/py/pdf-to-md")
+async def pdf_to_md_endpoint(file: UploadFile = File(...)):
+    try:
+        pdf_bytes = await read_and_validate_pdf(file)
+        out = pdf_to_markdown_md(pdf_bytes)
+        return StreamingResponse(
+            out,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=document.md"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF-to-Markdown error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to convert PDF to Markdown.")
+
+
+@app.post("/api/py/pdf-to-html")
+async def pdf_to_html_endpoint(file: UploadFile = File(...)):
+    try:
+        pdf_bytes = await read_and_validate_pdf(file)
+        out = pdf_to_html_stream(pdf_bytes)
+        return StreamingResponse(
+            out,
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=document.html"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF-to-HTML error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to convert PDF to HTML.")
+
+
+@app.post("/api/py/pdf-to-txt")
+async def pdf_to_txt_endpoint(file: UploadFile = File(...)):
+    try:
+        pdf_bytes = await read_and_validate_pdf(file)
+        out = pdf_to_txt_stream(pdf_bytes)
+        return StreamingResponse(
+            out,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=document.txt"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF-to-TXT error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to extract plain text from PDF.")
