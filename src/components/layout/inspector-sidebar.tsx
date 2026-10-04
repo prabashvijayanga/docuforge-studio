@@ -2,6 +2,7 @@
 import React from "react";
 import { ConvertTargetFormat, InspectorSettings, ToolMode } from "@/types/document";
 import { formatBytes } from "@/lib/utils";
+import { ArrowRightLeft, CheckCircle2 } from "lucide-react";
 
 interface InspectorSidebarProps {
   mode: ToolMode;
@@ -11,6 +12,7 @@ interface InspectorSidebarProps {
   onUpdateSettings: (partial: Partial<InspectorSettings>) => void;
   onExport: () => void;
   isProcessing: boolean;
+  onResetFiles?: () => void;
 }
 
 const CONVERT_OPTIONS: {
@@ -19,48 +21,13 @@ const CONVERT_OPTIONS: {
   title: string;
   desc: string;
 }[] = [
-  {
-    id: "docx",
-    badge: ".DOCX",
-    title: "Microsoft Word",
-    desc: "Editable paragraphs & layout",
-  },
-  {
-    id: "pptx",
-    badge: ".PPTX",
-    title: "PowerPoint Slides",
-    desc: "16:9 widescreen presentation + notes",
-  },
-  {
-    id: "xlsx",
-    badge: ".XLSX",
-    title: "Excel Spreadsheet",
-    desc: "Auto-detects tables & structured rows",
-  },
-  {
-    id: "md",
-    badge: ".MD",
-    title: "Markdown Document",
-    desc: "Clean headings & text for Notion/GitHub",
-  },
-  {
-    id: "html",
-    badge: ".HTML",
-    title: "Interactive Web Page",
-    desc: "Standalone responsive HTML5 document",
-  },
-  {
-    id: "txt",
-    badge: ".TXT",
-    title: "Plain Text Stream",
-    desc: "Raw UTF-8 text with page markers",
-  },
-  {
-    id: "png_zip",
-    badge: ".ZIP",
-    title: "High-Res PNG Archive",
-    desc: "150 DPI rendered page sheets",
-  },
+  { id: "docx", badge: ".DOCX", title: "Microsoft Word", desc: "Editable paragraphs & layout" },
+  { id: "pptx", badge: ".PPTX", title: "PowerPoint Slides", desc: "16:9 widescreen presentation" },
+  { id: "xlsx", badge: ".XLSX", title: "Excel Spreadsheet", desc: "Auto-detects tables & rows" },
+  { id: "md", badge: ".MD", title: "Markdown Document", desc: "Clean headings for Notion/GitHub" },
+  { id: "html", badge: ".HTML", title: "Interactive Web Page", desc: "Standalone responsive HTML5" },
+  { id: "txt", badge: ".TXT", title: "Plain Text Stream", desc: "Raw UTF-8 text with page markers" },
+  { id: "png_zip", badge: ".ZIP", title: "High-Res PNG Archive", desc: "150 DPI rendered page sheets" },
 ];
 
 export function InspectorSidebar({
@@ -71,6 +38,7 @@ export function InspectorSidebar({
   onUpdateSettings,
   onExport,
   isProcessing,
+  onResetFiles,
 }: InspectorSidebarProps) {
   const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
@@ -116,9 +84,6 @@ export function InspectorSidebar({
                 className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-900"
               />
             </div>
-            <p className="text-[11px] text-zinc-500 leading-relaxed">
-              Drag cards to reorder pages, insert Smart Typed Note pages anywhere, or remove unwanted sheets.
-            </p>
           </div>
         )}
 
@@ -188,43 +153,105 @@ export function InspectorSidebar({
         )}
 
         {mode === "convert" && (
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                Target Output Format (7 Engines)
-              </h3>
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+              Conversion Direction
+            </h3>
+
+            {/* Direction Toggle */}
+            <div className="grid grid-cols-2 gap-1.5 bg-zinc-100 p-1 rounded-lg border border-zinc-200">
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateSettings({ convertDirection: "pdf_to_other" });
+                  if (onResetFiles) onResetFiles();
+                }}
+                className={`py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all ${
+                  settings.convertDirection === "pdf_to_other"
+                    ? "bg-white text-zinc-900 shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                PDF → Any
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onUpdateSettings({ convertDirection: "other_to_pdf" });
+                  if (onResetFiles) onResetFiles();
+                }}
+                className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-md text-[11px] font-semibold transition-all ${
+                  settings.convertDirection === "other_to_pdf"
+                    ? "bg-white text-zinc-900 shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                <ArrowRightLeft className="w-3 h-3" />
+                Any → PDF
+              </button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
-              {CONVERT_OPTIONS.map((opt) => {
-                const active = settings.convertFormat === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => onUpdateSettings({ convertFormat: opt.id })}
-                    className={`p-2.5 rounded-lg border text-left text-xs transition-all ${
-                      active
-                        ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900/10"
-                        : "border-zinc-200 hover:border-zinc-300"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="font-semibold text-zinc-900">{opt.title}</span>
-                      <span
-                        className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
-                          active
-                            ? "bg-zinc-900 text-white"
-                            : "bg-zinc-100 text-zinc-600"
-                        }`}
-                      >
-                        {opt.badge}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-zinc-500">{opt.desc}</div>
-                  </button>
-                );
-              })}
-            </div>
+
+            {settings.convertDirection === "pdf_to_other" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2 pt-1">
+                {CONVERT_OPTIONS.map((opt) => {
+                  const active = settings.convertFormat === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onUpdateSettings({ convertFormat: opt.id })}
+                      className={`p-2.5 rounded-lg border text-left text-xs transition-all ${
+                        active
+                          ? "border-zinc-900 bg-zinc-50 ring-1 ring-zinc-900/10"
+                          : "border-zinc-200 hover:border-zinc-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="font-semibold text-zinc-900">{opt.title}</span>
+                        <span
+                          className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                            active ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600"
+                          }`}
+                        >
+                          {opt.badge}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-zinc-500">{opt.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-3.5 space-y-2.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-zinc-900">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Auto-Detect Reverse Engine</span>
+                </div>
+                <p className="text-[11px] text-zinc-600 leading-relaxed">
+                  Drop any of the following formats into the workspace to compile directly into an ISO-standard PDF:
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .PPTX → .PDF
+                  </span>
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .DOCX → .PDF
+                  </span>
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .XLSX → .PDF
+                  </span>
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .MD → .PDF
+                  </span>
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .HTML → .PDF
+                  </span>
+                  <span className="px-2 py-1 bg-white border border-zinc-200 rounded text-zinc-800">
+                    .TXT → .PDF
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

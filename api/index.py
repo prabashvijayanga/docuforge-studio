@@ -17,6 +17,12 @@ from api.services.pdf_service import (
     pdf_to_markdown_md,
     pdf_to_html_stream,
     pdf_to_txt_stream,
+    docx_to_pdf_stream,
+    pptx_to_pdf_stream,
+    xlsx_to_pdf_stream,
+    md_to_pdf_stream,
+    html_to_pdf_stream,
+    txt_to_pdf_stream,
 )
 
 Image.MAX_IMAGE_PIXELS = 100_000_000
@@ -68,7 +74,7 @@ async def read_and_validate_image(upload: UploadFile) -> bytes:
 
 @app.get("/api/py/health")
 def health_check():
-    return {"status": "online", "engine": "PyMuPDF + OpenXML Multi-Converter Engine"}
+    return {"status": "online", "engine": "PyMuPDF Bi-Directional Multi-Converter Engine"}
 
 
 @app.post("/api/py/organize")
@@ -282,3 +288,42 @@ async def pdf_to_txt_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"PDF-to-TXT error: {e}")
         raise HTTPException(status_code=500, detail="Failed to extract plain text from PDF.")
+
+
+# UNIVERSAL REVERSE CONVERTER: DOCX / PPTX / XLSX / MD / HTML / TXT -> PDF
+@app.post("/api/py/office-to-pdf")
+async def office_to_pdf_endpoint(file: UploadFile = File(...)):
+    data = await file.read(MAX_FILE_SIZE_BYTES + 1)
+    if len(data) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 50MB security limit.")
+
+    fname = (file.filename or "document").lower()
+    try:
+        if fname.endswith(".docx"):
+            out = docx_to_pdf_stream(data)
+        elif fname.endswith(".pptx"):
+            out = pptx_to_pdf_stream(data)
+        elif fname.endswith(".xlsx"):
+            out = xlsx_to_pdf_stream(data)
+        elif fname.endswith(".md") or fname.endswith(".markdown"):
+            out = md_to_pdf_stream(data)
+        elif fname.endswith(".html") or fname.endswith(".htm"):
+            out = html_to_pdf_stream(data)
+        elif fname.endswith(".txt") or fname.endswith(".csv"):
+            out = txt_to_pdf_stream(data)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Upload .docx, .pptx, .xlsx, .md, .html, or .txt",
+            )
+
+        return StreamingResponse(
+            out,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=converted_to_pdf.pdf"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Office-to-PDF error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert {fname} to PDF.")

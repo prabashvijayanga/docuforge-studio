@@ -5,6 +5,8 @@ export type ToolMode =
   | "compress"
   | "convert";
 
+export type ConvertDirection = "pdf_to_other" | "other_to_pdf";
+
 export type ConvertTargetFormat =
   | "docx"
   | "pptx"
@@ -32,6 +34,7 @@ export interface InspectorSettings {
   compressLevel: "light" | "recommended" | "extreme";
   pageSize: "A4" | "FIT";
   pageMargin: number;
+  convertDirection: ConvertDirection;
   convertFormat: ConvertTargetFormat;
   imageDpi: number;
 }

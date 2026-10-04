@@ -3,14 +3,17 @@ from PIL import Image
 from pdf2docx import Converter
 from pptx import Presentation
 from pptx.util import Inches
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+import docx
 import io
 import zipfile
 import json
 import tempfile
 import os
 import html
+import re
 from typing import List, Tuple
 
 
@@ -153,6 +156,10 @@ def compress_pdf_stream(pdf_bytes: bytes, level: str = "recommended") -> io.Byte
     return output
 
 
+# ==============================================================================
+# DIRECTION 1: PDF TO OTHER FORMATS (7 CONVERTERS)
+# ==============================================================================
+
 def pdf_to_images_zip(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     zip_buffer = io.BytesIO()
@@ -187,11 +194,9 @@ def pdf_to_word_docx(pdf_bytes: bytes) -> io.BytesIO:
             os.remove(tmp_docx_path)
 
 
-# NEW CONVERTER 1: PDF to PowerPoint (.PPTX)
 def pdf_to_pptx_stream(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     prs = Presentation()
-    # Set Widescreen 16:9 (13.333 x 7.5 inches)
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank_layout = prs.slide_layouts[6]
@@ -201,7 +206,6 @@ def pdf_to_pptx_stream(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
         pix = page.get_pixmap(dpi=dpi)
         img_bytes = io.BytesIO(pix.tobytes("png"))
 
-        # Center page image inside slide while preserving aspect ratio
         page_ratio = pix.width / pix.height
         slide_w = prs.slide_width
         slide_h = prs.slide_height
@@ -220,7 +224,6 @@ def pdf_to_pptx_stream(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
 
         slide.shapes.add_picture(img_bytes, left, top, width=draw_w, height=draw_h)
 
-        # Also attach extracted text into Speaker Notes for easy copy-pasting!
         page_text = page.get_text("text").strip()
         if page_text:
             notes_slide = slide.notes_slide
@@ -233,11 +236,9 @@ def pdf_to_pptx_stream(pdf_bytes: bytes, dpi: int = 150) -> io.BytesIO:
     return output
 
 
-# NEW CONVERTER 2: PDF to Excel (.XLSX) — Extracts Tables & Structured Text
 def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     wb = openpyxl.Workbook()
-    # Remove default sheet
     wb.remove(wb.active)
 
     header_font = Font(bold=True, color="FFFFFF")
@@ -247,13 +248,12 @@ def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
         ws = wb.create_sheet(title=f"Page_{idx + 1}")
         row_cursor = 1
 
-        # 1. Try native table detection first
         tables_found = False
         try:
             tabs = page.find_tables()
             if tabs and tabs.tables:
                 tables_found = True
-                for t_idx, table in enumerate(tabs.tables):
+                for table in tabs.tables:
                     extracted = table.extract()
                     for r_i, row in enumerate(extracted):
                         cleaned_row = [cell if cell is not None else "" for cell in row]
@@ -269,7 +269,6 @@ def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
         except Exception:
             tables_found = False
 
-        # 2. Fallback: Structured line/column extraction if no formal borders exist
         if not tables_found:
             ws.append([f"Page {idx + 1} Extracted Content"])
             ws.cell(row=1, column=1).font = header_font
@@ -277,7 +276,6 @@ def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
             lines = page.get_text("text").splitlines()
             for line in lines:
                 if line.strip():
-                    # Split by multiple spaces or tabs to mimic columns
                     cols = [c.strip() for c in line.split("  ") if c.strip()]
                     ws.append(cols if len(cols) > 1 else [line.strip()])
 
@@ -291,7 +289,6 @@ def pdf_to_excel_xlsx(pdf_bytes: bytes) -> io.BytesIO:
     return output
 
 
-# NEW CONVERTER 3: PDF to Markdown (.MD)
 def pdf_to_markdown_md(pdf_bytes: bytes) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     md_parts = ["# Extracted Document\n"]
@@ -321,7 +318,6 @@ def pdf_to_markdown_md(pdf_bytes: bytes) -> io.BytesIO:
     return output
 
 
-# NEW CONVERTER 4: PDF to Standalone Responsive HTML5 (.HTML)
 def pdf_to_html_stream(pdf_bytes: bytes) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     html_pages = []
@@ -364,7 +360,6 @@ def pdf_to_html_stream(pdf_bytes: bytes) -> io.BytesIO:
     return output
 
 
-# NEW CONVERTER 5: PDF to Plain Text (.TXT)
 def pdf_to_txt_stream(pdf_bytes: bytes) -> io.BytesIO:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     txt_chunks = []
@@ -372,5 +367,245 @@ def pdf_to_txt_stream(pdf_bytes: bytes) -> io.BytesIO:
         txt_chunks.append(f"=== PAGE {idx + 1} ===\n{page.get_text('text').strip()}\n")
     doc.close()
     output = io.BytesIO("\n".join(txt_chunks).encode("utf-8"))
+    output.seek(0)
+    return output
+
+
+# ==============================================================================
+# DIRECTION 2: REVERSE CONVERTERS — ANY FILE TO PDF (DOCX, PPTX, XLSX, MD, HTML, TXT)
+# ==============================================================================
+
+def render_html_story_to_pdf(html_content: str, page_w: float = 595.0, page_h: float = 842.0) -> io.BytesIO:
+    """Uses PyMuPDF's native C++ Story layout engine to paginate HTML/CSS into a crisp multi-page PDF."""
+    css = """
+    body { font-family: sans-serif; font-size: 11pt; line-height: 1.5; color: #18181B; }
+    h1 { font-size: 20pt; font-weight: bold; color: #09090B; margin-bottom: 10pt; border-bottom: 1px solid #E4E4E7; padding-bottom: 4pt; }
+    h2 { font-size: 15pt; font-weight: bold; color: #18181B; margin-top: 12pt; margin-bottom: 6pt; }
+    h3 { font-size: 12.5pt; font-weight: bold; color: #27272A; margin-top: 10pt; margin-bottom: 4pt; }
+    p { margin-bottom: 8pt; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8pt; margin-bottom: 12pt; font-size: 9.5pt; }
+    th { background-color: #18181B; color: #FFFFFF; font-weight: bold; padding: 6pt; border: 1px solid #27272A; text-align: left; }
+    td { padding: 5pt; border: 1px solid #D4D4D8; color: #27272A; }
+    pre, code { font-family: monospace; background-color: #F4F4F5; padding: 4pt; font-size: 9.5pt; }
+    """
+    try:
+        story = fitz.Story(html=html_content, user_css=css)
+        writer_buf = io.BytesIO()
+        writer = fitz.DocumentWriter(writer_buf)
+        mediabox = fitz.Rect(0, 0, page_w, page_h)
+        where = mediabox + (42, 42, -42, -42)
+
+        more = 1
+        while more:
+            device = writer.begin_page(mediabox)
+            more, _ = story.place(where)
+            story.draw(device)
+            writer.end_page()
+        writer.close()
+        writer_buf.seek(0)
+        return writer_buf
+    except Exception:
+        # Fallback simple text pagination if Story fails
+        plain = re.sub(r"<[^>]+>", "", html_content)
+        return txt_to_pdf_stream(plain.encode("utf-8"))
+
+
+# 1. WORD (.DOCX) TO PDF
+def docx_to_pdf_stream(docx_bytes: bytes) -> io.BytesIO:
+    document = docx.Document(io.BytesIO(docx_bytes))
+    html_parts = ["<html><body>"]
+
+    for para in document.paragraphs:
+        text = html.escape(para.text.strip())
+        if not text:
+            continue
+        style_name = (para.style.name or "").lower()
+        if "heading 1" in style_name or "title" in style_name:
+            html_parts.append(f"<h1>{text}</h1>")
+        elif "heading 2" in style_name:
+            html_parts.append(f"<h2>{text}</h2>")
+        elif "heading" in style_name:
+            html_parts.append(f"<h3>{text}</h3>")
+        elif "list" in style_name:
+            html_parts.append(f"<p>• {text}</p>")
+        else:
+            html_parts.append(f"<p>{text}</p>")
+
+    for table in document.tables:
+        html_parts.append("<table>")
+        for r_idx, row in enumerate(table.rows):
+            html_parts.append("<tr>")
+            tag = "th" if r_idx == 0 else "td"
+            for cell in row.cells:
+                cell_txt = html.escape(cell.text.strip())
+                html_parts.append(f"<{tag}>{cell_txt}</{tag}>")
+            html_parts.append("</tr>")
+        html_parts.append("</table>")
+
+    html_parts.append("</body></html>")
+    return render_html_story_to_pdf("\n".join(html_parts))
+
+
+# 2. POWERPOINT (.PPTX) TO PDF (16:9 Widescreen Slide Renderer)
+def pptx_to_pdf_stream(pptx_bytes: bytes) -> io.BytesIO:
+    prs = Presentation(io.BytesIO(pptx_bytes))
+    pdf_doc = fitz.open()
+
+    # Widescreen 16:9 points (960 x 540 pt)
+    slide_w, slide_h = 960.0, 540.0
+    emu_w = float(prs.slide_width or 12192000)
+    emu_h = float(prs.slide_height or 6858000)
+
+    for s_idx, slide in enumerate(prs.slides):
+        page = pdf_doc.new_page(width=slide_w, height=slide_h)
+
+        # Slide subtle border & footer badge
+        page.draw_rect(fitz.Rect(0, 0, slide_w, slide_h), color=(0.9, 0.9, 0.9), fill=(1, 1, 1))
+        page.insert_text(
+            fitz.Point(slide_w - 90, slide_h - 18),
+            f"SLIDE {s_idx + 1}",
+            fontsize=9,
+            color=(0.6, 0.6, 0.6),
+        )
+
+        fallback_y = 54.0
+        for shape in slide.shapes:
+            # Convert EMU coordinates to PDF points
+            x0 = max(28.0, (float(shape.left or 0) / emu_w) * slide_w)
+            y0 = max(28.0, (float(shape.top or 0) / emu_h) * slide_h)
+            w = max(80.0, (float(shape.width or 0) / emu_w) * slide_w)
+            h = max(40.0, (float(shape.height or 0) / emu_h) * slide_h)
+            target_rect = fitz.Rect(x0, y0, min(slide_w - 28, x0 + w), min(slide_h - 28, y0 + h))
+
+            # Render embedded slide images
+            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                try:
+                    img_blob = shape.image.blob
+                    page.insert_image(target_rect, stream=img_blob)
+                except Exception:
+                    pass
+
+            # Render slide text frames
+            if shape.has_text_frame:
+                full_text = shape.text_frame.text.strip()
+                if not full_text:
+                    continue
+                is_title = shape == slide.shapes.title or y0 < 110
+                f_size = 24 if is_title else 14
+                f_color = (0.06, 0.06, 0.08) if is_title else (0.2, 0.2, 0.24)
+
+                placed = page.insert_textbox(
+                    target_rect,
+                    full_text,
+                    fontsize=f_size,
+                    color=f_color,
+                )
+                if placed < 0:
+                    # Fallback if textbox overflowed
+                    page.insert_textbox(
+                        fitz.Rect(48, fallback_y, slide_w - 48, slide_h - 36),
+                        full_text,
+                        fontsize=12,
+                        color=f_color,
+                    )
+                    fallback_y = min(slide_h - 80, fallback_y + 70)
+
+    output = io.BytesIO()
+    pdf_doc.save(output, garbage=2, deflate=True)
+    pdf_doc.close()
+    output.seek(0)
+    return output
+
+
+# 3. EXCEL (.XLSX) TO PDF (Landscape Data Grid Renderer)
+def xlsx_to_pdf_stream(xlsx_bytes: bytes) -> io.BytesIO:
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+    html_parts = ["<html><body>"]
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        html_parts.append(f"<h2>Sheet: {html.escape(sheet_name)}</h2>")
+        html_parts.append("<table>")
+
+        rows = list(ws.iter_rows(values_only=True))
+        # Filter out completely empty rows
+        non_empty_rows = [r for r in rows if any(cell is not None and str(cell).strip() != "" for cell in r)]
+
+        for r_idx, row in enumerate(non_empty_rows[:250]):
+            html_parts.append("<tr>")
+            tag = "th" if r_idx == 0 else "td"
+            for cell in row[:15]:
+                val = "" if cell is None else html.escape(str(cell))
+                html_parts.append(f"<{tag}>{val}</{tag}>")
+            html_parts.append("</tr>")
+
+        html_parts.append("</table>")
+
+    html_parts.append("</body></html>")
+    # Render in Landscape A4 (842 x 595 pt) for wide spreadsheet columns
+    return render_html_story_to_pdf("\n".join(html_parts), page_w=842.0, page_h=595.0)
+
+
+# 4. MARKDOWN (.MD) TO PDF
+def md_to_pdf_stream(md_bytes: bytes) -> io.BytesIO:
+    text = md_bytes.decode("utf-8", errors="replace")
+    html_lines = ["<html><body>"]
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("# "):
+            html_lines.append(f"<h1>{html.escape(line[2:])}</h1>")
+        elif line.startswith("## "):
+            html_lines.append(f"<h2>{html.escape(line[3:])}</h2>")
+        elif line.startswith("### "):
+            html_lines.append(f"<h3>{html.escape(line[4:])}</h3>")
+        elif line.startswith(("- ", "* ")):
+            html_lines.append(f"<p>• {html.escape(line[2:])}</p>")
+        else:
+            html_lines.append(f"<p>{html.escape(line)}</p>")
+
+    html_lines.append("</body></html>")
+    return render_html_story_to_pdf("\n".join(html_lines))
+
+
+# 5. HTML (.HTML) TO PDF
+def html_to_pdf_stream(html_bytes: bytes) -> io.BytesIO:
+    raw_html = html_bytes.decode("utf-8", errors="replace")
+    return render_html_story_to_pdf(raw_html)
+
+
+# 6. PLAIN TEXT (.TXT) TO PDF
+def txt_to_pdf_stream(txt_bytes: bytes) -> io.BytesIO:
+    text = txt_bytes.decode("utf-8", errors="replace")
+    pdf_doc = fitz.open()
+    a4_w, a4_h = 595.0, 842.0
+    margin = 48.0
+    line_height = 16.0
+
+    lines = []
+    for paragraph in text.splitlines():
+        if not paragraph.strip():
+            lines.append("")
+            continue
+        # Wrap long lines to 82 chars
+        while len(paragraph) > 82:
+            lines.append(paragraph[:82])
+            paragraph = paragraph[82:]
+        lines.append(paragraph)
+
+    page = pdf_doc.new_page(width=a4_w, height=a4_h)
+    y = margin
+    for line in lines:
+        if y > a4_h - margin:
+            page = pdf_doc.new_page(width=a4_w, height=a4_h)
+            y = margin
+        page.insert_text(fitz.Point(margin, y), line, fontsize=10.5, color=(0.1, 0.1, 0.12))
+        y += line_height
+
+    output = io.BytesIO()
+    pdf_doc.save(output, garbage=2, deflate=True)
+    pdf_doc.close()
     output.seek(0)
     return output

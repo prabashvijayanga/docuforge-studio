@@ -115,6 +115,7 @@ export default function DocuForgeStudioPage() {
     compressLevel: "recommended",
     pageSize: "A4",
     pageMargin: 24,
+    convertDirection: "pdf_to_other",
     convertFormat: "docx",
     imageDpi: 150,
   });
@@ -421,10 +422,10 @@ export default function DocuForgeStudioPage() {
         return;
       }
 
-      // 4. SERVER-SIDE PYTHON PIPELINES (Compress + 7 Multi-Format Converters)
+      // 4. SERVER-SIDE PYTHON PIPELINES (Compress + Bi-Directional Converters)
       const formData = new FormData();
       let endpoint = "/api/py/compress";
-      const baseName = files[0].name.replace(/\.pdf$/i, "");
+      const baseName = files[0].name.replace(/\.[^/.]+$/, "");
       let outputFilename = `${baseName}_output.pdf`;
 
       if (activeTool === "compress") {
@@ -434,37 +435,45 @@ export default function DocuForgeStudioPage() {
         outputFilename = `compressed_${files[0].name}`;
       } else if (activeTool === "convert") {
         formData.append("file", files[0]);
-        switch (settings.convertFormat) {
-          case "docx":
-            endpoint = "/api/py/pdf-to-word";
-            outputFilename = `${baseName}.docx`;
-            break;
-          case "pptx":
-            endpoint = "/api/py/pdf-to-pptx";
-            outputFilename = `${baseName}.pptx`;
-            break;
-          case "xlsx":
-            endpoint = "/api/py/pdf-to-excel";
-            outputFilename = `${baseName}.xlsx`;
-            break;
-          case "md":
-            endpoint = "/api/py/pdf-to-md";
-            outputFilename = `${baseName}.md`;
-            break;
-          case "html":
-            endpoint = "/api/py/pdf-to-html";
-            outputFilename = `${baseName}.html`;
-            break;
-          case "txt":
-            endpoint = "/api/py/pdf-to-txt";
-            outputFilename = `${baseName}.txt`;
-            break;
-          case "png_zip":
-          default:
-            formData.append("dpi", String(settings.imageDpi));
-            endpoint = "/api/py/pdf-to-images";
-            outputFilename = `${baseName}_images.zip`;
-            break;
+
+        if (settings.convertDirection === "other_to_pdf") {
+          // Reverse Conversion: DOCX / PPTX / XLSX / MD / HTML / TXT -> PDF
+          endpoint = "/api/py/office-to-pdf";
+          outputFilename = `${baseName}.pdf`;
+        } else {
+          // Forward Conversion: PDF -> 7 Target Formats
+          switch (settings.convertFormat) {
+            case "docx":
+              endpoint = "/api/py/pdf-to-word";
+              outputFilename = `${baseName}.docx`;
+              break;
+            case "pptx":
+              endpoint = "/api/py/pdf-to-pptx";
+              outputFilename = `${baseName}.pptx`;
+              break;
+            case "xlsx":
+              endpoint = "/api/py/pdf-to-excel";
+              outputFilename = `${baseName}.xlsx`;
+              break;
+            case "md":
+              endpoint = "/api/py/pdf-to-md";
+              outputFilename = `${baseName}.md`;
+              break;
+            case "html":
+              endpoint = "/api/py/pdf-to-html";
+              outputFilename = `${baseName}.html`;
+              break;
+            case "txt":
+              endpoint = "/api/py/pdf-to-txt";
+              outputFilename = `${baseName}.txt`;
+              break;
+            case "png_zip":
+            default:
+              formData.append("dpi", String(settings.imageDpi));
+              endpoint = "/api/py/pdf-to-images";
+              outputFilename = `${baseName}_images.zip`;
+              break;
+          }
         }
       }
 
@@ -505,7 +514,15 @@ export default function DocuForgeStudioPage() {
 
       <div className="flex-1 flex flex-col lg:flex-row overflow-x-hidden">
         {files.length === 0 ? (
-          <FileDropzone mode={activeTool} onFilesSelected={handleFilesSelected} />
+          <FileDropzone
+            mode={activeTool}
+            convertDirection={settings.convertDirection}
+            onToggleConvertDirection={(dir) => {
+              setSettings((prev) => ({ ...prev, convertDirection: dir }));
+              handleReset();
+            }}
+            onFilesSelected={handleFilesSelected}
+          />
         ) : activeTool === "organize" ? (
           loadingThumbnails ? (
             <div className="flex-1 py-20 flex items-center justify-center font-mono text-xs text-zinc-500">
@@ -598,6 +615,7 @@ export default function DocuForgeStudioPage() {
           onUpdateSettings={(partial) => setSettings((prev) => ({ ...prev, ...partial }))}
           onExport={handleExport}
           isProcessing={isProcessing}
+          onResetFiles={handleReset}
         />
       </div>
 
